@@ -1,6 +1,6 @@
 # 01 — Bolt tracer — write a fact, read it back by bookmark
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 
@@ -34,13 +34,13 @@ HydraDB and property indexes are automatic, so no index bootstrap is written.
 
 ## Acceptance criteria
 
-- [ ] A one-command script brings up a local HydraDB node from a clean shell, with every required environment variable set including the large minimum stack size
-- [ ] Writing an Entity, a Fact and a SUBJECT edge over Bolt succeeds and the write returns a bookmark
-- [ ] A causal read supplying that bookmark returns the written fact
-- [ ] The statement inventory module exists and the verify target executes every declared template against a throwaway node, failing loudly on any parse rejection
-- [ ] Identity hashing is covered by a test asserting the same input yields the same id across separate processes
-- [ ] The admin metrics endpoint is reachable and its output parses
-- [ ] Repository carries an Apache-2.0 license and no commit predates Aug 12 2026
+- [x] A one-command script brings up a local HydraDB node from a clean shell, with every required environment variable set including the large minimum stack size
+- [x] Writing an Entity, a Fact and a SUBJECT edge over Bolt succeeds and the write returns a bookmark
+- [x] A causal read supplying that bookmark returns the written fact
+- [x] The statement inventory module exists and the verify target executes every declared template against a throwaway node, failing loudly on any parse rejection
+- [x] Identity hashing is covered by a test asserting the same input yields the same id across separate processes
+- [x] The admin metrics endpoint is reachable and its output parses
+- [x] Repository carries an Apache-2.0 license and no commit predates Aug 12 2026
 
 ## Blocked by
 

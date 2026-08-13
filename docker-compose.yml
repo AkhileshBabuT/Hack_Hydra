@@ -4,9 +4,29 @@
 # (Rust 1.91 + libcypher-parser + GraphBLAS). That recipe does not work on
 # Windows without WSL and was budgeted 8 hours of Day 1. This is ~40 seconds.
 services:
+  # LOCAL_PATH must already exist and the auth token must have content, so a
+  # clean clone needs this before graph-node starts. Doing it here rather than
+  # in a shell script keeps `docker compose up -d` sufficient on its own --
+  # `make` is not present on a default Windows box.
+  init:
+    image: ghcr.io/hydra-db/hydradb:latest
+    container_name: hydramem-init
+    user: root
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mkdir -p /data/store /data/cache
+        [ -s /data/auth-token ] || printf '%s\n' 'local-development-token-32-bytes' > /data/auth-token
+        chown -R 10001:10001 /data
+    volumes:
+      - ./hydradb-data:/data
+
   hydradb:
     image: ghcr.io/hydra-db/hydradb:latest
     container_name: hydramem-hydradb
+    depends_on:
+      init:
+        condition: service_completed_successfully
     ports:
       - "7687:7687"   # Bolt
       - "8443:8443"   # HTTP
