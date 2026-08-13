@@ -1,0 +1,16 @@
+[project]
+name = "hydramem"
+version = "0.1.0"
+description = "Bitemporal agent memory on HydraDB, with abstention as a first-class result."
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "neo4j>=5.0",   # Bolt driver; HydraDB is Bolt 5.1-5.4 compatible
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

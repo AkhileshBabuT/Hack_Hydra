@@ -1,0 +1,17 @@
+# Secrets. Must be ignored before the first commit -- the repo is public and a
+# key in git history survives deletion.
+.env
+*.key
+
+# HydraDB local store, cache and dev auth token
+hydradb-data/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# LLM disk cache (slice 02). Committed selectively where licenses allow.
+.cache/
