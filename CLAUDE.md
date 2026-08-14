@@ -133,13 +133,16 @@ model quality instead of retrieval quality.
 ## Repository
 
 `origin` → **`https://github.com/AkhileshBabuT/Hack_Hydra`**, branch **`main`**
-(renamed from `master` when the remote was added). Slices 01–07 are pushed;
-`e495afe` is 06, `82181d4` is 07. Slices 08 and 09 landed **together** in
-`7a42e18` and are not yet pushed. They share four files (`gates.py`,
-`answer.py`, `statements.py`, `CLAUDE.md`), so by the convention below they
-could not be split without `git add -p` — and splitting them anyway would have
-produced an 08 commit whose own tests do not pass, since `test_temporal.py`
-calls `gates.temporal_gate`. The message names both slices for that reason.
+(renamed from `master` when the remote was added). Slices 01–09 are on
+`origin/main`: `e495afe` is 06, `82181d4` is 07, `7a42e18` is **08 and 09
+together**. Check `git log --oneline origin/main..main` rather than trusting a
+sentence here for what is unpushed.
+
+08 and 09 share four files (`gates.py`, `answer.py`, `statements.py`,
+`CLAUDE.md`), so by the convention below they could not be split without
+`git add -p` — and splitting them anyway would have produced an 08 commit whose
+own tests do not pass, since `test_temporal.py` calls `gates.temporal_gate`.
+The commit message names both slices for that reason.
 
 Verified before the first push and worth re-checking before any later one:
 `.env` has never been tracked, appears in no commit, and no `nvapi-` string
