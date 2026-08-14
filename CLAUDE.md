@@ -57,6 +57,20 @@ elsewhere breaks the disk cache, and the cache is what keeps reruns at $0.
 HydraMem must differ *only* in their retrieval layer, or the comparison measures
 model quality instead of retrieval quality.
 
+## HydraDB source reference
+
+A checkout of `hydra-db/hydradb` @ `6a2fbb1` lives at **`C:\Projects\hydradb-ref`**,
+indexed with codegraph. Query it without leaving this project:
+
+```
+codegraph_search  / codegraph_explore   with projectPath: "C:\\Projects\\hydradb-ref"
+```
+
+101 Rust files, ~5.6k nodes. Prefer this over grep when verifying a Cypher
+constraint or a procedure signature — the Cypher surface is undocumented in
+places and the parser is the only authority. This project is indexed too, but at
+four modules it is small enough that Read and Grep are usually faster.
+
 ## HydraDB: verified constraints
 
 Verified against `hydra-db/hydradb` @ `6a2fbb1`. The Cypher surface is a
