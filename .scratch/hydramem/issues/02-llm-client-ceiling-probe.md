@@ -1,6 +1,6 @@
 # 02 — LLM client, context-ceiling probe, budget attestation
 
-Status: blocked — NIM key not authorized for inference
+Status: done
 
 ## Parent
 
@@ -31,11 +31,11 @@ reach.
 - [x] All model access flows through one module with a documented one-line provider swap
 - [x] Every response is cached to disk by content hash and a rerun issues zero network calls
 - [x] Requests carry exponential backoff and pre-flight token counting
-- [ ] The real context ceiling is measured by sending progressively larger requests and is recorded as a number in the budget document
-- [ ] Account credit state and observed rate limit are recorded in the budget document
-- [ ] The extraction model returns schema-valid JSON on a sample session with reasoning turned off
-- [ ] The local emergency-fallback model is confirmed running on this machine
-- [ ] The budget document attests zero spend
+- [x] The real context ceiling is measured by sending progressively larger requests and is recorded as a number in the budget document
+- [x] Account credit state and observed rate limit are recorded in the budget document
+- [x] The extraction model returns schema-valid JSON on a sample session with reasoning turned off
+- [x] The local emergency-fallback model is confirmed running on this machine
+- [x] The budget document attests zero spend
 
 ## Blocked by
 
@@ -71,3 +71,22 @@ strongest baseline. Resolved in favour of the methodological rule — Ultra answ
 for every arm, so only the retrieval layer differs. This also sharpens the cost
 table, since full-context sends ~115k tokens to Ultra where HydraMem sends a
 handful of facts to the same model.
+
+**2026-08-13 (later) — unblocked and complete.** Key now authorizes inference on
+all three models. `docs/budget.md` regenerated from live measurements.
+
+Results that change the plan:
+
+- **No context ceiling found.** 1,000,007 tokens accepted by Ultra (provider
+  counted 1,000,023) in 39.4s. The plan feared ~131k and budgeted an overflow
+  path to Gemini Flash. LongMemEval_S averages ~115k, so **there is no overflow
+  tail** — `GEMINI_API_KEY` is not needed and the risk-register entry "real
+  context ceiling below 115k" is dead.
+- **Reasoning is ON by default** on Lightning and must be disabled through
+  `chat_template_kwargs={"thinking": false}`. The two commonly cited
+  alternatives — a `/no_think` system prompt and `extra_body={"reasoning":false}`
+  — both leave thinking tokens in the output and would have broken every
+  extraction call.
+- **Throughput varies widely**: 35.8–188.9 RPM across four runs. Plan against the
+  documented ~40 RPM floor, not the observed peak.
+- `models.list()` is public and answers an invalid key. It is not an auth check.

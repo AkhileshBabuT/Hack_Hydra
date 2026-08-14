@@ -11,6 +11,7 @@ Measures rather than assumes:
 """
 
 import json
+import os
 import pathlib
 import sys
 import time
@@ -20,7 +21,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from hydramem import llm  # noqa: E402
 
 REPORT = pathlib.Path("docs/budget.md")
-PROBE_SIZES = [8_000, 60_000, 120_000, 130_000, 140_000]
+PROBE_SIZES = [8_000, 60_000, 120_000, 140_000, 200_000, 300_000, 500_000, 1_000_000]
 
 
 def check_auth(model):
@@ -49,8 +50,15 @@ def check_json(model):
         return False, str(exc)[:200]
 
 
+# Latency is only real on an uncached call. Persisted here so a rerun that hits
+# the cache reports the measurement instead of overwriting it with 0.0s -- the
+# cost table in slice 14 depends on these being genuine wall-clock numbers.
+LATENCY_FILE = pathlib.Path("docs/ceiling-latency.json")
+
+
 def find_ceiling(model):
     """Send progressively larger real requests until the endpoint refuses."""
+    measured = json.loads(LATENCY_FILE.read_text()) if LATENCY_FILE.exists() else {}
     results = []
     # ~1 token per word for this filler; close enough to walk the boundary.
     for target in PROBE_SIZES:
@@ -61,23 +69,41 @@ def find_ceiling(model):
             start = time.time()
             out = llm.complete([{"role": "user", "content": prompt}], model=model,
                                max_tokens=16, retries=1)
-            results.append((actual, True, out["usage"]["prompt_tokens"],
-                            round(time.time() - start, 1)))
-            print(f"  {actual:>7,} tokens  OK   ({round(time.time()-start,1)}s)")
+            if out["cached"]:
+                secs = measured.get(str(actual))
+                note = "cached" if secs is None else f"{secs}s (earlier run)"
+            else:
+                secs = round(time.time() - start, 1)
+                measured[str(actual)] = secs
+                note = f"{secs}s"
+            results.append((actual, True, out["usage"]["prompt_tokens"], secs))
+            print(f"  {actual:>9,} tokens  OK   {note}")
         except Exception as exc:  # noqa: BLE001
-            results.append((actual, False, 0, 0))
-            print(f"  {actual:>7,} tokens  FAIL {str(exc)[:110]}")
+            results.append((actual, False, 0, None))
+            print(f"  {actual:>9,} tokens  FAIL {str(exc)[:110]}")
             break
+
+    LATENCY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LATENCY_FILE.write_text(json.dumps(measured, indent=2, sort_keys=True))
     return results
 
 
 def measure_rpm(model, n=8):
+    """Throughput against the live endpoint.
+
+    Every call carries a nonce so it cannot hit the disk cache. Without this the
+    probe measures local disk speed and reports a five-figure RPM -- a
+    confidently wrong number, which is exactly what this file exists to avoid.
+    """
+    nonce = os.urandom(8).hex()
     start = time.time()
     ok = 0
     for i in range(n):
         try:
-            llm.complete([{"role": "user", "content": f"Reply with the number {i}."}],
-                         model=model, max_tokens=8, retries=1, temperature=0.0)
+            llm.complete(
+                [{"role": "user", "content": f"Reply with the number {i}. [{nonce}]"}],
+                model=model, max_tokens=8, retries=1, temperature=0.0,
+            )
             ok += 1
         except Exception:  # noqa: BLE001
             pass
@@ -110,19 +136,34 @@ def main():
               "| requested tokens | accepted | provider-counted prompt tokens | latency (s) |",
               "|---|---|---|---|"]
     for actual, accepted, counted, secs in ceiling_rows:
-        lines.append(f"| {actual:,} | {'yes' if accepted else 'no'} | {counted:,} | {secs} |")
+        shown = "n/a" if secs is None else f"{secs}"
+        lines.append(f"| {actual:,} | {'yes' if accepted else 'no'} | {counted:,} | {shown} |")
     passed = [r[0] for r in ceiling_rows if r[1]]
     ceiling = max(passed) if passed else 0
-    lines += ["", f"**Largest accepted request: {ceiling:,} tokens.**",
-              "", f"Set `HYDRAMEM_CONTEXT_CEILING={ceiling}` in `.env`. Requests above this",
-              "route to the overflow provider and the split is disclosed by count.", ""]
+    hit_wall = any(not r[1] for r in ceiling_rows)
+    lines += ["", f"**Largest accepted request: {ceiling:,} tokens.**", ""]
+    if hit_wall:
+        lines += [f"Set `HYDRAMEM_CONTEXT_CEILING={ceiling}` in `.env`. Requests above this",
+                  "route to the overflow provider, and the split is disclosed by count.", ""]
+    else:
+        lines += ["No wall was found within the probed range. LongMemEval_S averages",
+                  "~115k tokens per question, so **there is no overflow tail** and no",
+                  "fallback provider is required for the full-context baseline.", ""]
 
     print("\nthroughput...")
     ok_n, secs, rpm = measure_rpm(llm.EXTRACT_MODEL)
     print(f"  {ok_n} calls in {secs}s -> ~{rpm} RPM")
+    samples_file = pathlib.Path("docs/rpm-samples.json")
+    samples = json.loads(samples_file.read_text()) if samples_file.exists() else []
+    samples.append(rpm)
+    samples_file.write_text(json.dumps(samples, indent=2))
     lines += ["## Observed throughput", "",
-              f"{ok_n} sequential calls in {secs}s — approximately **{rpm} requests/min** "
-              f"against a documented ceiling near 40 RPM.", "",
+              f"Latest run: {ok_n} sequential uncached calls in {secs}s — **{rpm} req/min**.", "",
+              f"Across {len(samples)} runs: **{min(samples)}–{max(samples)} req/min** "
+              f"(median {sorted(samples)[len(samples)//2]}).", "",
+              "NVIDIA documents the limit as varying with model, use case and current",
+              "overall traffic, and the spread above confirms that. Treat ~40 RPM as a",
+              "floor to plan against rather than a number to schedule against.", "",
               "## Spend", "", "**$0.** Free tier only; no paid plan enabled.", ""]
 
     REPORT.parent.mkdir(parents=True, exist_ok=True)
