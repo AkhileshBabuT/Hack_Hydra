@@ -83,6 +83,26 @@ with empty parameters will not catch:
   is missing field last_seen"*). Adding a property to an upsert is a breaking
   change for every caller, not an optional extension.
 
+## The mutation idempotency key does not police conflicts on the Cypher path
+
+The plan assumed that reusing `hydradb.idempotency_key` with different content
+returns an explicit non-retryable conflict. Verified against a live node: it does
+not. Two `UNWIND` upserts sent under one key with genuinely different rows were
+both accepted and both applied.
+
+`GraphError::IdempotencyConflict` is real (`src/codec.rs`, mapped to
+`Neo.ClientError.Transaction.Invalid` in `src/client/bolt/values.rs:243`), but it
+is raised by storage-level operations — batch import dedupe, segment compaction,
+indexer scopes — not by a Bolt Cypher mutation. The Bolt layer derives a
+per-principal key (`src/client/bolt.rs:1336`) and uses it for durable write
+deduplication only.
+
+Consequence for us: the second idempotency layer has to come from the key itself.
+`ingest.batch_key` hashes the rows it sends, so one key cannot name two payloads.
+The `IdempotencyConflict` mapping in `client.py` stays as a net in case a future
+build starts enforcing it. **The plan's claim should not be repeated in the
+README as a HydraDB guarantee.**
+
 ## Deletion is not a usable primitive at our scale
 
 `MATCH (n:Fact) WHERE n.instance_id = $i DETACH DELETE n` parses and runs, but it

@@ -172,6 +172,49 @@ def test_reingest_changes_no_counts(driver, instance_id):
     assert counts() == first
 
 
+def test_interrupted_ingest_resumes_to_the_same_graph(driver, instance_id):
+    """A crash partway through must not leave a graph a resume cannot repair.
+
+    The interruption is modelled by writing a prefix of each payload -- which is
+    what a killed process leaves behind -- and then running the whole ingest.
+    """
+    sessions = [session(0, "s0", 1000), session(1, "s1", 2000)]
+    inst = corpus.Instance(
+        instance_id=instance_id, question_type="knowledge-update",
+        question="q", answer="a", asked_at=3000,
+        sessions=tuple(sessions), answer_session_ids=(),
+    )
+    rows = ingest.build_rows(inst, [
+        (sessions[0], [fact(), fact(predicate="lives_in", value="Berlin", value_is_entity=True)]),
+        (sessions[1], [fact(value="Globex"), fact(predicate="pet", value="cat")]),
+    ])
+
+    partial = ingest.Rows(
+        sessions=rows.sessions[:1], entities=rows.entities[:1],
+        facts=rows.facts[:1], subject=rows.subject[:1],
+        asserted_in=rows.asserted_in[:1],
+    )
+    ingest.write_rows(driver, partial)
+    ingest.write_rows(driver, rows)
+
+    assert client_read(driver, "count_facts", instance_id) == len(rows.facts)
+    assert client_read(driver, "count_entities", instance_id) == len(rows.entities)
+    assert client_read(driver, "count_edges_subject", instance_id) == len(rows.subject)
+
+
+def test_a_batch_key_cannot_carry_two_different_payloads(driver, instance_id):
+    """The mutation key is derived from the rows it sends.
+
+    HydraDB does not police this on the Cypher path -- reusing a key with a
+    different payload is accepted, verified against a live node -- so the
+    guarantee has to come from the key itself. Two payloads, two keys, always.
+    """
+    a = [{"vid": 1, "instance_id": instance_id}]
+    b = [{"vid": 2, "instance_id": instance_id}]
+    assert ingest.batch_key("upsert_entity", a) != ingest.batch_key("upsert_entity", b)
+    assert ingest.batch_key("upsert_entity", a) == ingest.batch_key("upsert_entity", list(a))
+
+
 def client_read(driver, statement_name, instance_id):
     from hydramem import client
     statement, _ = statements.INVENTORY[statement_name]

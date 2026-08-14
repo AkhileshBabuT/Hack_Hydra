@@ -1,6 +1,6 @@
 # 04 — Idempotent re-ingest under regrouped batches
 
-Status: ready-for-agent
+Status: done (2026-08-14)
 
 ## Parent
 
@@ -25,10 +25,24 @@ cover.
 
 ## Acceptance criteria
 
-- [ ] Re-running a completed ingest changes no node or edge counts
-- [ ] Re-running with deliberately different batch groupings changes no node or edge counts
-- [ ] An idempotency-key conflict is raised as a loud non-retryable error rather than being swallowed
-- [ ] Interrupting an ingest partway and resuming converges to the same graph as an uninterrupted run
+- [x] Re-running a completed ingest changes no node or edge counts
+- [x] Re-running with deliberately different batch groupings changes no node or edge counts
+- [x] An idempotency-key conflict is raised as a loud non-retryable error rather than being swallowed
+- [x] Interrupting an ingest partway and resuming converges to the same graph as an uninterrupted run
+
+## Result
+
+Three criteria hold as written, covered by `tests/test_ingest.py`: re-ingest
+changes no counts, a second pass at `batch_size=1` changes no counts, and a
+partial write followed by a full ingest converges.
+
+The fourth does not hold as written, and the premise was wrong rather than the
+code. HydraDB does **not** raise a conflict when a mutation idempotency key is
+reused with different content on the Cypher path — verified live, and the source
+confirms `IdempotencyConflict` belongs to storage-level imports and compaction,
+not Bolt Cypher. So the guarantee is moved into the key: `batch_key` hashes the
+rows it sends, so one key cannot name two payloads. The conflict mapping in
+`client.py` stays as a net. See `docs/hydradb-notes.md`.
 
 ## Blocked by
 

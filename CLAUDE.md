@@ -140,7 +140,12 @@ re-ingest safe.
 ### Connection facts
 
 - Routing URI `neo4j://127.0.0.1:7687`; bearer auth with the auth-token contents.
-- Idempotency key: tx metadata `hydradb.idempotency_key`, ≤128 chars, `[A-Za-z0-9._-]`.
+- Idempotency key: tx metadata `hydradb.idempotency_key`, ≤128 chars,
+  `[A-Za-z0-9._-]`. **It does not police conflicts on the Cypher path** —
+  verified: one key with two different payloads is accepted, both applied.
+  Uniqueness comes from `ingest.batch_key` hashing the rows it sends. Do not
+  repeat the plan's "explicit non-retryable conflict" claim as a HydraDB
+  guarantee.
 - Consistency: `hydradb.consistency` = `causal` (demo, real hot path) or `strong`
   (evaluation, so scores reproduce).
 - `RUST_MIN_STACK=33554432` is required — without it the node serves `/readyz`
