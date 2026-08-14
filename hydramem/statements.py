@@ -214,6 +214,24 @@ MATCH (a:Entity {id: $eid})-[:ALIAS_OF]->(b:Entity)
 RETURN b.id AS id, b.key AS key, b.name AS name
 """
 
+# Gate 1 resolves the question's entities against these two in one round trip
+# each, not one per candidate: an instance holds tens of entities, so pulling
+# the lot costs less than deciding which ones to ask for.
+ENTITIES_FOR_INSTANCE = """
+MATCH (e:Entity)
+WHERE e.instance_id = $instance_id
+RETURN e.id AS id, e.key AS key, e.name AS name, e.type AS type
+"""
+
+# The alias closure as pairs. One hop, not transitive: `alias_pairs` only ever
+# points a shorter surface form at a longer one, so a chain would mean "maya" ->
+# "maya chen" -> "maya chen jr" and that is not a shape it can produce.
+ALIASES_FOR_INSTANCE = """
+MATCH (a:Entity)-[r:ALIAS_OF]->(b:Entity)
+WHERE a.instance_id = $instance_id
+RETURN a.key AS alias_key, b.key AS canonical_key
+"""
+
 COUNT_FACTS = """
 MATCH (f:Fact)
 WHERE f.instance_id = $instance_id
@@ -256,6 +274,8 @@ INVENTORY = {
     "facts_for_entity": (FACTS_FOR_ENTITY, {"eid": 0}),
     "facts_for_instance": (FACTS_FOR_INSTANCE, {"instance_id": "__probe__"}),
     "aliases_of_entity": (ALIASES_OF_ENTITY, {"eid": 0}),
+    "entities_for_instance": (ENTITIES_FOR_INSTANCE, {"instance_id": "__probe__"}),
+    "aliases_for_instance": (ALIASES_FOR_INSTANCE, {"instance_id": "__probe__"}),
     "superseded_by_fact": (SUPERSEDED_BY_FACT, {"fid": 0}),
     "count_edges_supersedes": (COUNT_EDGES_SUPERSEDES, {"instance_id": "__probe__"}),
     "count_facts": (COUNT_FACTS, {"instance_id": "__probe__"}),
