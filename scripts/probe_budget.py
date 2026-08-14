@@ -25,8 +25,15 @@ PROBE_SIZES = [8_000, 60_000, 120_000, 140_000, 200_000, 300_000, 500_000, 1_000
 
 
 def check_auth(model):
+    """Authorization is a live fact, so this call must never hit the cache.
+
+    A cached "ok" from an earlier run reports a model as authorized after access
+    to it has gone away -- which happened: Ultra answered on 2026-08-13 and
+    returned 404 on 2026-08-14 while still appearing in models.list().
+    """
+    nonce = os.urandom(8).hex()
     try:
-        llm.complete([{"role": "user", "content": "Reply with the single word: ok"}],
+        llm.complete([{"role": "user", "content": f"Reply with the single word: ok [{nonce}]"}],
                      model=model, max_tokens=8, retries=1)
         return True, "ok"
     except Exception as exc:  # noqa: BLE001

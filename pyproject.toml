@@ -5,7 +5,11 @@ description = "Bitemporal agent memory on HydraDB, with abstention as a first-cl
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 dependencies = [
-    "neo4j>=5.0",   # Bolt driver; HydraDB is Bolt 5.1-5.4 compatible
+    "neo4j>=5.0",       # Bolt driver; HydraDB is Bolt 5.1-5.4 compatible
+    "openai>=1.0",      # OpenAI-compatible client; NIM is the provider
+    "pydantic>=2.0",    # strict schemas for extraction and answering
+    "python-dotenv",    # .env, which is gitignored and holds the API key
+    "tiktoken",         # pre-flight token counting for context routing
 ]
 
 [project.optional-dependencies]

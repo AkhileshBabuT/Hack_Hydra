@@ -18,7 +18,8 @@ def _write_fact(driver, instance_id, subject="person:maya", value="Acme"):
         driver,
         statements.UPSERT_ENTITY,
         {"rows": [{"vid": eid, "key": subject, "name": "Maya",
-                   "type": "person", "first_seen": 0, "instance_id": instance_id}]},
+                   "type": "person", "first_seen": 0, "last_seen": 0,
+                   "instance_id": instance_id}]},
         idempotency_key=f"{key}.e",
     )
     _, bm = client.write(
@@ -29,7 +30,8 @@ def _write_fact(driver, instance_id, subject="person:maya", value="Acme"):
                    "valid_from": 1700000000, "valid_to": 0,
                    "asserted_at": 1700000000, "session_id": "s1", "turn_idx": 0,
                    "snippet": f"I work at {value}", "confidence": 0.9,
-                   "status": "current", "instance_id": instance_id}]},
+                   "status": "current", "valid_from_hint": "",
+                   "instance_id": instance_id}]},
         idempotency_key=f"{key}.f",
         bookmarks=bm,
     )

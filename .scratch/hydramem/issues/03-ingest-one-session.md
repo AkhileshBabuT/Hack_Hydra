@@ -1,6 +1,6 @@
 # 03 — Ingest one session end-to-end and answer from the graph
 
-Status: ready-for-agent
+Status: done (2026-08-14)
 
 ## Parent
 
@@ -29,13 +29,13 @@ correctly from the graph.
 
 ## Acceptance criteria
 
-- [ ] A loader reads the benchmark corpus and yields whole sessions
-- [ ] Extraction runs one call per session against a strict schema with reasoning off, and every result is cached
-- [ ] Entity resolution normalizes, keys by type, exact-matches, and emits alias edges for near matches without merging
-- [ ] Writes are batched and carry a mutation idempotency key within the documented length and character limits
-- [ ] One full question instance ingests with zero errors and node and edge counts are sane
-- [ ] A hand-picked single-session question is answered correctly from the graph
-- [ ] All new statements are registered in the statement inventory and pass the verify target
+- [x] A loader reads the benchmark corpus and yields whole sessions
+- [x] Extraction runs one call per session against a strict schema with reasoning off, and every result is cached
+- [x] Entity resolution normalizes, keys by type, exact-matches, and emits alias edges for near matches without merging
+- [x] Writes are batched and carry a mutation idempotency key within the documented length and character limits
+- [x] One full question instance ingests with zero errors and node and edge counts are sane
+- [x] A hand-picked single-session question is answered correctly from the graph
+- [x] All new statements are registered in the statement inventory and pass the verify target
 
 ## Model configuration
 
@@ -51,6 +51,19 @@ anywhere else, or the disk cache stops guaranteeing free reruns.
 Extraction windows at the **session** level. Only fall back to sliding 3-turn
 windows if a session exceeds the ceiling measured in slice 02, or if slice 06 shows
 session-level quality is materially worse.
+
+## Result
+
+Measured on `b86304ba` (single-session-user, 41 sessions) from
+`longmemeval_s_cleaned`: 40 sessions extracted, 1 rejected, 220 fact rows ->
+219 Fact nodes (one within-session duplicate collapsed by content-derived id),
+17 entities, 11 OBJECT edges. Answer correct and cited from the graph.
+
+Two fixes came out of it rather than out of review: extraction was truncating at
+`max_tokens=4096` and losing whole sessions to a JSON parse error, and the
+extractor omits `subject` on a first-person corpus. Both are recorded in
+CLAUDE.md. Parse failures went 6/41 -> 1/41; the remaining one is left for the
+slice 06 measurement rather than tuned against.
 
 ## Blocked by
 

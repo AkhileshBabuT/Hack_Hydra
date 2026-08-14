@@ -14,6 +14,8 @@ Planning artifacts live in `.scratch/hydramem/`. Do not restate their contents h
 
 ```bash
 docker compose up -d                      # HydraDB: bolt 7687, http 8443, admin 9090
+./.venv/Scripts/python.exe scripts/fetch_corpus.py                 # LongMemEval -> data/
+./.venv/Scripts/python.exe scripts/ingest_one.py <question_id>     # one instance, end to end
 ./.venv/Scripts/python.exe -m pytest -q   # full suite
 ./.venv/Scripts/python.exe -m pytest tests/test_statements.py -q   # Cypher parse check
 ./.venv/Scripts/python.exe scripts/probe_budget.py                 # regenerate docs/budget.md
@@ -32,7 +34,13 @@ hydramem/
   statements.py   EVERY Cypher template, + INVENTORY registry
   client.py       Bolt: bookmarks, consistency, idempotency keys, metrics scrape
   llm.py          provider-agnostic model access: cache, backoff, token counting
+  corpus.py       LongMemEval loader: streaming, whole sessions, epoch timestamps
+  extract.py      session-level extraction, controlled predicates, output repair
+  ingest.py       pure row builder + batched guarded writes
+  answer.py       retrieve -> answer -> citation check -> abstain
 scripts/probe_budget.py   slice 02 measurement gates -> docs/budget.md
+scripts/fetch_corpus.py   corpus download into data/ (gitignored)
+scripts/ingest_one.py     slice 03 demo: one instance, corpus -> answer
 docs/hydradb-notes.md     rough edges found; upstream issue candidates
 docs/budget.md            measured limits (generated, do not hand-edit)
 ```
@@ -49,6 +57,11 @@ means nobody validates it.
 filters are tested over plain fact lists with no database and no model call. This
 is deliberate: the predicate gate is the primary suspect whenever abstention
 precision fails, so it must be debuggable without infrastructure.
+
+**Re-ingesting after an extractor change needs a wiped node.** Fact ids are
+content-derived, so a new prompt or model writes a *second* generation of facts
+beside the first and every count silently inflates. HydraDB cannot delete them
+affordably. `docker compose down`, `rm -rf hydradb-data`, `docker compose up -d`.
 
 **All model access goes through `llm.py`.** Constructing a provider client
 elsewhere breaks the disk cache, and the cache is what keeps reruns at $0.
@@ -94,6 +107,15 @@ deliberate subset; assume nothing beyond it without testing.
 - **No index DDL.** Property indexes are maintained automatically.
 - **`EXPLAIN`** exists only on the in-process shard API, not over Bolt or HTTP.
 - **UNION**: read-only, ≤256 arms, per-arm `ORDER BY`/`LIMIT`.
+- **A node with a label or a non-id property must be named.**
+  `(:Fact {id: 1})-[r]->(e)` is rejected; `(f:Fact {id: 1})-[r]->(e)` is not.
+- **An edge batch is rejected whole if an endpoint is missing**, as a syntax
+  error. Node batches must land first; a dangling row fails loudly.
+- **An `UNWIND` row must carry every field its statement names.** Adding a
+  property to an upsert breaks every existing caller.
+- **Deletion is impractical**: `DETACH DELETE` costs ~0.3s/node and a few
+  hundred nodes exceed the server's 30s query timeout; the `UNWIND` batch form
+  is rejected. There is no per-tenant reset — wipe `hydradb-data/` instead.
 - **Keep to 6 edge types.** CSC generations are built per edge type; `SUBJECT`
   and `OBJECT` carry the traversal load and stay dense because of it.
 
@@ -109,7 +131,11 @@ UNWIND $rows AS row MERGE (n {id: row.vid})
       n.__hydradb_create_only_first_seen = row.first_seen
 ```
 
-A create-only marker must read the same row field as the property it names.
+Verified live, full rules: every guarded property must also be `SET` from a row
+field of the *same name*; a create-only marker requires an update guard present;
+the guard property may not itself be create-only. Replaying a row with an older
+guard value leaves all properties untouched — which is what makes an out-of-order
+re-ingest safe.
 
 ### Connection facts
 
@@ -140,11 +166,36 @@ Measured, in `docs/budget.md`. Regenerate rather than hand-edit.
 - **No context ceiling found.** 1,000,007 tokens accepted (provider-counted
   1,000,023) in 39.4s. LongMemEval_S averages ~115k, so there is no overflow tail
   and no fallback provider is needed. `GEMINI_API_KEY` is unused.
-- **Throughput 35.8–188.9 RPM** across runs. Plan against ~40 as a floor.
+- **Throughput 35.8–189.5 RPM** across runs. Plan against ~40 as a floor.
+- **NIM returns transient 404s** for a model id that is valid and answers again
+  minutes later. `llm.py` retries 404/408/409/429; a persistent 404 on the
+  answering model means switching *every* arm to the fallback, never falling
+  back per call — that would break the single-answering-model rule silently.
 - **`models.list()` is public** — it returns 102 models for a deliberately invalid
   key. It is not an auth check. Only `chat/completions` proves authorization.
+- **Extraction needs `max_tokens=8192`.** A dense session yields 30+ facts; at
+  4096 the JSON was truncated mid-string and the session was lost to a parse
+  error that looked like a model-quality problem and was ours.
+- **The extractor omits `subject` and occasionally misspells a field name.** The
+  schema defaults `subject`/`predicate`/`value` for that reason and `clean()`
+  drops what is left empty. A per-session parse failure is counted and named in
+  the ingest stats, never swallowed.
 - `tiktoken`'s `cl100k_base` tracks the provider's own count within ~0.01% at
   scale, so it is sound for pre-flight routing decisions.
+
+## Corpus
+
+`xiaowu0162/longmemeval-cleaned` on HuggingFace (MIT), not the original release —
+its author marks the original deprecated. `data/` is gitignored; fetch it with
+`scripts/fetch_corpus.py`. `longmemeval_s_cleaned.json` is the benchmark arm
+(277 MB, ~500 instances, 30-50 sessions each); `longmemeval_oracle.json` is
+evidence sessions only and is the fast loop.
+
+- The corpus lists haystack sessions **out of chronological order**. `corpus.py`
+  sorts by timestamp once, so session `idx`, `NEXT` edges and recency agree.
+- **Gold answers are sometimes numbers**, not strings. Coerced in `to_instance`.
+- Abstention instances carry an `_abs` suffix on `question_id` (30 of 500 in the
+  oracle split).
 
 ## Traps
 

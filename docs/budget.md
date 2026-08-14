@@ -32,9 +32,9 @@ fallback provider is required for the full-context baseline.
 
 ## Observed throughput
 
-Latest run: 8 sequential uncached calls in 4.6s — **104.3 req/min**.
+Latest run: 8 sequential uncached calls in 2.5s — **189.5 req/min**.
 
-Across 4 runs: **35.8–188.9 req/min** (median 104.3).
+Across 5 runs: **35.8–189.5 req/min** (median 104.3).
 
 NVIDIA documents the limit as varying with model, use case and current
 overall traffic, and the spread above confirms that. Treat ~40 RPM as a

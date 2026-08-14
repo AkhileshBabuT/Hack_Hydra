@@ -58,6 +58,10 @@ CACHE_DIR = pathlib.Path(os.environ.get("HYDRAMEM_CACHE", ".cache/llm"))
 _ENC = tiktoken.get_encoding("cl100k_base")
 
 
+# 429 rate limit, 408/409 transport races, 404 transient routing (measured).
+RETRYABLE_4XX = frozenset([404, 408, 409, 429])
+
+
 class ContextOverflow(RuntimeError):
     """Request exceeds the measured ceiling. Route to the overflow provider."""
 
@@ -182,8 +186,11 @@ def complete(
         except Exception as exc:  # noqa: BLE001 - provider SDKs raise varied types
             last = exc
             status = getattr(exc, "status_code", None)
-            # 4xx that is not rate-limiting will not fix itself by waiting.
-            if status and status != 429 and 400 <= status < 500:
+            # A 4xx that names a client mistake will not fix itself by waiting.
+            # 404 is not one of them here: NIM returns it transiently mid-run
+            # for a model whose id is valid and which answers again seconds
+            # later, and an unattended multi-hour ingest must survive that.
+            if status and 400 <= status < 500 and status not in RETRYABLE_4XX:
                 raise
             if attempt == retries - 1:
                 break
