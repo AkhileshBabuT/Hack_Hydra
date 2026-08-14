@@ -15,3 +15,6 @@ __pycache__/
 
 # LLM disk cache (slice 02). Committed selectively where licenses allow.
 .cache/
+
+# codegraph index (local, rebuildable)
+.codegraph/
