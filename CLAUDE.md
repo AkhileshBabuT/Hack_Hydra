@@ -16,6 +16,7 @@ Planning artifacts live in `.scratch/hydramem/`. Do not restate their contents h
 docker compose up -d                      # HydraDB: bolt 7687, http 8443, admin 9090
 ./.venv/Scripts/python.exe scripts/fetch_corpus.py                 # LongMemEval -> data/
 ./.venv/Scripts/python.exe scripts/ingest_one.py <question_id>     # one instance, end to end
+./.venv/Scripts/python.exe scripts/ingest_one.py --oracle          # same, on the small split
 ./.venv/Scripts/python.exe -m pytest -q   # full suite
 ./.venv/Scripts/python.exe -m pytest tests/test_statements.py -q   # Cypher parse check
 ./.venv/Scripts/python.exe scripts/probe_budget.py                 # regenerate docs/budget.md
@@ -45,6 +46,14 @@ scripts/ingest_one.py     slice 03 demo: one instance, corpus -> answer
 docs/hydradb-notes.md     rough edges found; upstream issue candidates
 docs/budget.md            measured limits (generated, do not hand-edit)
 ```
+
+## Where the build is
+
+Slices 01–05 are done; each issue in `.scratch/hydramem/issues/` carries its own
+acceptance detail and a Result section recording what changed and why. **06 is
+next and is `ready-for-human`** — it measures extractor quality on a hand-checked
+slice and gates scaling to the full corpus. The four abstention gates do not
+exist yet; they are 07–09, and `answer.py` is deliberately gate-free until then.
 
 ## Non-negotiable conventions
 
@@ -88,8 +97,9 @@ codegraph_search  / codegraph_explore   with projectPath: "C:\\Projects\\hydradb
 
 101 Rust files, ~5.6k nodes. Prefer this over grep when verifying a Cypher
 constraint or a procedure signature — the Cypher surface is undocumented in
-places and the parser is the only authority. This project is indexed too, but at
-four modules it is small enough that Read and Grep are usually faster.
+places and the parser is the only authority. This project is indexed too — run
+`codegraph sync .` after adding a module — and `codegraph_explore` answers
+"how does X work" in one call where Read and Grep take several.
 
 ## HydraDB: verified constraints
 
@@ -211,6 +221,43 @@ evidence sessions only and is the fast loop.
 - **Gold answers are sometimes numbers**, not strings. Coerced in `to_instance`.
 - Abstention instances carry an `_abs` suffix on `question_id` (30 of 500 in the
   oracle split).
+
+## Known gaps as of slice 05
+
+Real, measured, and owned by a later slice. None of these are mysteries — they
+are debts with an address. Prune a line when its slice closes it.
+
+- **Answering has no gates.** `answer.py` feeds the *whole* instance subgraph to
+  the model — 219 facts on a 41-session instance. Gates 1–4 are slices 07–09; do
+  not mistake the current path for the design.
+- **The citation check is lenient.** An answer survives if *any* cited id is in
+  the retrieved set; invented ids are filtered out rather than being fatal.
+  Slice 10 has to decide whether a fabricated id sitting beside a valid one is
+  still `uncited_answer`.
+- **Entity resolution is unexercised.** `alias_pairs` produced **0** `ALIAS_OF`
+  edges across 41 real sessions, because nearly every subject normalizes to
+  `person:user`. Gate 1 leans on that closure, so slice 07 must verify it against
+  real data before `unknown_entity` can be trusted.
+- **~2.4% of sessions still fail extraction** (1 of 41 after the `max_tokens`
+  fix). Counted and named in the ingest stats. Slice 06 owns the number and the
+  go/no-go on the full corpus.
+- **Predicate assignment is unreliable** — e.g. `budget: '2-Day General
+  Admission'`. Because only functional predicates chain, a mis-slotted value can
+  supersede a real one, so extraction noise is *amplified* by the chain rather
+  than diluted by it.
+- **A restatement moves `valid_from` forward.** The newest identical assertion
+  becomes the current fact, so "since when has X been true" answers the latest
+  mention, not the first. Slice 08 must decide whether an unchanged value should
+  keep the earliest `valid_from`.
+- **Vague dates collapse to assertion time.** `resolve_valid_from` parses numeric
+  shapes only; "last summer" falls back to the session timestamp. Slice 08.
+- **Same-turn ties are arbitrary.** Two facts sharing entity, predicate and turn
+  are ordered by node id — deterministic across processes, but not meaningful.
+- **`client.IdempotencyConflict` cannot fire** on the Cypher path. It is a
+  deliberate net, not live protection; see the connection facts above.
+- **The statement inventory probes with empty rows**, so it proves a statement
+  parses, not that it runs. Edge statements in particular pass the probe and then
+  fail on real rows if an endpoint is missing.
 
 ## Traps
 
