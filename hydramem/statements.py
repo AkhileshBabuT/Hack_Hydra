@@ -109,6 +109,30 @@ MERGE (a)-[r:NEXT {id: row.rid}]->(b)
 SET r.instance_id = row.instance_id
 """
 
+LINK_SUPERSEDES = """
+UNWIND $rows AS row
+MATCH (a:Fact {id: row.src}), (b:Fact {id: row.dst})
+MERGE (a)-[r:SUPERSEDES {id: row.rid}]->(b)
+SET r.instance_id = row.instance_id
+"""
+
+# Materialization of the derived chain. A vertex upsert, not a MATCH ... SET:
+# guarded merge markers are only honoured inside the UNWIND upsert form.
+#
+# The guard is `valid_to`, which moves 0 -> timestamp and never back. HydraDB
+# applies a guarded patch strictly when stored < incoming, so replaying this is
+# a no-op and an older close cannot move the end date backwards. Note the
+# companion effect: UPSERT_FACT is guarded on `asserted_at`, which is always
+# equal on replay, so a later re-ingest cannot reset `status` to 'current'.
+CLOSE_FACT = """
+UNWIND $rows AS row
+MERGE (n {id: row.vid})
+SET n:Fact,
+    n.status = row.status,
+    n.valid_to = row.valid_to,
+    n.__hydradb_update_if_newer_by = row.valid_to
+"""
+
 LINK_ALIAS_OF = """
 UNWIND $rows AS row
 MATCH (a:Entity {id: row.src}), (b:Entity {id: row.dst})
@@ -170,6 +194,21 @@ RETURN f.id AS id, f.fact_id AS fact_id, f.predicate AS predicate,
 ORDER BY asserted_at
 """
 
+# The chain as graph structure: what this fact replaced, newest first.
+SUPERSEDED_BY_FACT = """
+MATCH (new:Fact {id: $fid})-[:SUPERSEDES]->(old:Fact)
+RETURN old.id AS id, old.fact_id AS fact_id, old.predicate AS predicate,
+       old.value_text AS value_text, old.valid_from AS valid_from,
+       old.valid_to AS valid_to, old.asserted_at AS asserted_at,
+       old.status AS status
+"""
+
+COUNT_EDGES_SUPERSEDES = """
+MATCH (a:Fact)-[r:SUPERSEDES]->(b:Fact)
+WHERE a.instance_id = $instance_id
+RETURN count(*) AS total
+"""
+
 ALIASES_OF_ENTITY = """
 MATCH (a:Entity {id: $eid})-[:ALIAS_OF]->(b:Entity)
 RETURN b.id AS id, b.key AS key, b.name AS name
@@ -208,6 +247,8 @@ INVENTORY = {
     "link_asserted_in": (LINK_ASSERTED_IN, {"rows": []}),
     "link_next": (LINK_NEXT, {"rows": []}),
     "link_alias_of": (LINK_ALIAS_OF, {"rows": []}),
+    "link_supersedes": (LINK_SUPERSEDES, {"rows": []}),
+    "close_fact": (CLOSE_FACT, {"rows": []}),
     "fact_by_id": (FACT_BY_ID, {"fid": 0}),
     "subject_of_fact": (SUBJECT_OF_FACT, {"fid": 0}),
     "count_label": (COUNT_LABEL, {}),
@@ -215,6 +256,8 @@ INVENTORY = {
     "facts_for_entity": (FACTS_FOR_ENTITY, {"eid": 0}),
     "facts_for_instance": (FACTS_FOR_INSTANCE, {"instance_id": "__probe__"}),
     "aliases_of_entity": (ALIASES_OF_ENTITY, {"eid": 0}),
+    "superseded_by_fact": (SUPERSEDED_BY_FACT, {"fid": 0}),
+    "count_edges_supersedes": (COUNT_EDGES_SUPERSEDES, {"instance_id": "__probe__"}),
     "count_facts": (COUNT_FACTS, {"instance_id": "__probe__"}),
     "count_entities": (COUNT_ENTITIES, {"instance_id": "__probe__"}),
     "count_edges_subject": (COUNT_EDGES_SUBJECT, {"instance_id": "__probe__"}),

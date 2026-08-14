@@ -19,7 +19,7 @@ from difflib import SequenceMatcher
 
 from pydantic import ValidationError
 
-from . import client, extract, ids, statements
+from . import chain, client, extract, ids, statements
 
 BATCH = 500
 
@@ -107,6 +107,8 @@ class Rows:
     asserted_in: list = field(default_factory=list)
     next: list = field(default_factory=list)
     alias: list = field(default_factory=list)
+    close: list = field(default_factory=list)        # derived, see chain.py
+    supersedes: list = field(default_factory=list)   # derived, see chain.py
 
     def counts(self) -> dict:
         return {
@@ -114,6 +116,7 @@ class Rows:
             "facts": len(self.facts), "subject": len(self.subject),
             "object": len(self.object), "asserted_in": len(self.asserted_in),
             "next": len(self.next), "alias": len(self.alias),
+            "close": len(self.close), "supersedes": len(self.supersedes),
         }
 
 
@@ -200,13 +203,13 @@ def build_rows(instance, extractions: list) -> Rows:
                 "value_text": fact.value,
                 "value_type": "entity" if fact.value_is_entity else "literal",
                 "valid_from": resolve_valid_from(fact.valid_from_hint, session.timestamp),
-                "valid_to": 0,                      # open; slice 05 closes it
+                "valid_to": 0,                      # open until chain.py closes it
                 "asserted_at": session.timestamp,
                 "session_id": session.session_id,
                 "turn_idx": fact.turn_idx,
                 "snippet": snippet,
                 "confidence": float(fact.confidence),
-                "status": "current",                # slice 05 supersedes
+                "status": "current",                # until chain.py supersedes it
                 "valid_from_hint": fact.valid_from_hint or "",
                 "instance_id": inst,
             })
@@ -240,15 +243,19 @@ def build_rows(instance, extractions: list) -> Rows:
         }
         for alias, canonical in alias_pairs(rows.entities)
     ]
+    # Derived last, from the rows just built: the chain is a function of the
+    # fact set, so it is permutation-invariant by construction rather than by
+    # write ordering.
+    rows.close, rows.supersedes = chain.materialize(rows, inst)
     return rows
 
 
 def batch_key(name: str, rows: list) -> str:
     """Mutation idempotency key: <=128 chars of [A-Za-z0-9._-], content-derived.
 
-    Content-derived is the point. A replay of the same batch is a server-side
-    no-op, and reusing a key for different content is a loud non-retryable
-    conflict rather than a silent overwrite.
+    Content-derived is the point, and it is the *only* thing making the key
+    meaningful: HydraDB does not reject a reused key carrying different rows
+    (verified live). Hashing the payload means one key cannot name two payloads.
     """
     digest = hashlib.sha256(json.dumps(rows, sort_keys=True).encode("utf-8")).hexdigest()
     return f"{name}.{digest}"
@@ -260,11 +267,13 @@ WRITE_PLAN = (
     ("sessions", "upsert_session", statements.UPSERT_SESSION),
     ("entities", "upsert_entity", statements.UPSERT_ENTITY),
     ("facts", "upsert_fact", statements.UPSERT_FACT),
+    ("close", "close_fact", statements.CLOSE_FACT),
     ("subject", "link_subject", statements.LINK_SUBJECT),
     ("object", "link_object", statements.LINK_OBJECT),
     ("asserted_in", "link_asserted_in", statements.LINK_ASSERTED_IN),
     ("next", "link_next", statements.LINK_NEXT),
     ("alias", "link_alias_of", statements.LINK_ALIAS_OF),
+    ("supersedes", "link_supersedes", statements.LINK_SUPERSEDES),
 )
 
 

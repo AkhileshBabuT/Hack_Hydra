@@ -60,6 +60,21 @@ Markers are `__hydradb_update_if_newer_by` and `__hydradb_create_only_<property>
 Behaviour is as advertised: replaying a row with an older guard value leaves every
 property untouched, and a create-only property keeps its value from first write.
 
+**The comparison is strictly less-than** (`guarded_metadata_patch`,
+`src/shard/write.rs:5225` — `if ordering != Ordering::Less { return Ok(None) }`).
+An *equal* guard value applies nothing, which is not a detail:
+
+- A fact upsert guarded on `asserted_at` becomes immutable on replay, because a
+  replay always carries the same `asserted_at`. That is why supersession is
+  materialized by a second statement guarded on `valid_to` (0 -> timestamp,
+  strictly increasing) rather than by rewriting the fact.
+- The same property makes the materialization durable: a later re-ingest cannot
+  reset `status` back to `current`, because its patch is rejected as not-newer.
+
+Guard markers are honoured **only inside the `UNWIND` vertex upsert form**. A
+`MATCH ... SET` write has no guarded equivalent, so any write that must not move
+a value backwards has to be expressed as a batched upsert.
+
 **Upstream issue candidate:** implemented and tested, absent from the compatibility
 document. Anyone reading only the docs would conclude the feature is unreachable —
 which is exactly the conclusion we reached before reading the parser.

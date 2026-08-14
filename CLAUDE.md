@@ -34,6 +34,7 @@ hydramem/
   statements.py   EVERY Cypher template, + INVENTORY registry
   client.py       Bolt: bookmarks, consistency, idempotency keys, metrics scrape
   llm.py          provider-agnostic model access: cache, backoff, token counting
+  chain.py        supersession: pure derivation + materialization rows
   corpus.py       LongMemEval loader: streaming, whole sessions, epoch timestamps
   extract.py      session-level extraction, controlled predicates, output repair
   ingest.py       pure row builder + batched guarded writes
@@ -52,6 +53,12 @@ inventory is executed against a live node by `tests/test_statements.py`. HydraDB
 rejects unsupported syntax at parse time and `EXPLAIN` is unreachable over Bolt,
 so this test is the only early warning that exists. Adding a query anywhere else
 means nobody validates it.
+
+**Only functional predicates supersede.** `extract.FUNCTIONAL_PREDICATES` (employer,
+lives_in, age, …) chain by predicate; everything else chains per distinct value, so
+a new `likes` accumulates instead of retracting the last one. Treating every
+predicate as functional marked 193 of 220 facts superseded on a real instance and
+would have made "what do I like" answerable only with the most recent mention.
 
 **Push logic into pure functions.** Gate predicates, chain derivation and temporal
 filters are tested over plain fact lists with no database and no model call. This
@@ -133,9 +140,12 @@ UNWIND $rows AS row MERGE (n {id: row.vid})
 
 Verified live, full rules: every guarded property must also be `SET` from a row
 field of the *same name*; a create-only marker requires an update guard present;
-the guard property may not itself be create-only. Replaying a row with an older
-guard value leaves all properties untouched — which is what makes an out-of-order
-re-ingest safe.
+the guard property may not itself be create-only. The comparison is **strictly
+less-than**, so an *equal* guard value writes nothing — a fact upsert guarded on
+`asserted_at` is immutable on replay. Supersession is therefore materialized by
+`CLOSE_FACT`, guarded on `valid_to` (0 → timestamp), and that same strictness is
+what stops a re-ingest resetting `status` to `current`. Guard markers work only
+inside the `UNWIND` vertex upsert form — `MATCH … SET` has no guarded equivalent.
 
 ### Connection facts
 

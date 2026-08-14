@@ -7,29 +7,9 @@ model: extraction quality is measured in slice 06, not asserted here.
 
 import pytest
 
+from conftest import make_fact as fact, make_instance as instance, make_session as session
+
 from hydramem import corpus, extract, ingest, statements
-
-
-def session(idx, session_id, timestamp, n_turns=4):
-    return corpus.Session(
-        session_id=session_id, idx=idx, timestamp=timestamp,
-        turns=tuple(
-            corpus.Turn(i, "user" if i % 2 == 0 else "assistant", f"turn {i} text", False)
-            for i in range(n_turns)
-        ),
-    )
-
-
-def instance(sessions):
-    return corpus.Instance(
-        instance_id="test-instance", question_type="knowledge-update",
-        question="where do I work?", answer="Acme", asked_at=2_000_000,
-        sessions=tuple(sessions), answer_session_ids=(),
-    )
-
-
-def fact(subject="user", predicate="employer", value="Acme", **kw):
-    return extract.ExtractedFact(subject=subject, predicate=predicate, value=value, **kw)
 
 
 # --- pure: identity and normalization -------------------------------------

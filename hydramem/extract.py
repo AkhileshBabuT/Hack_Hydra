@@ -35,6 +35,16 @@ PREDICATES = (
     "other",
 )
 
+# Predicates that hold at most one value at a time. Only these form supersession
+# chains: an employer replaces an employer, but a new "likes" does not retract
+# the last one. Getting this wrong is not cosmetic -- treating every predicate as
+# functional marked 193 of 220 facts superseded on a real instance, which would
+# have left "what do I like" answerable only with the most recent thing ever said.
+FUNCTIONAL_PREDICATES = frozenset([
+    "name", "age", "occupation", "employer", "job_title", "lives_in",
+    "hometown", "birthday", "email", "phone", "address", "budget",
+])
+
 ENTITY_TYPES = ("person", "org", "place", "thing", "preference", "event")
 
 # The extractor fills a required field rather than omitting the fact. These

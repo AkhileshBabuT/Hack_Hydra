@@ -7,9 +7,12 @@ Two HydraDB behaviours the rest of the system leans on:
     pinning the snapshot. That is read-your-own-writes as a server guarantee,
     which vector-store memory layers do not have.
 
-  - Mutations carry an idempotency key in transaction metadata. Replaying a key
-    is a no-op; reusing one with different content is an explicit
-    non-retryable conflict, which must surface loudly rather than be swallowed.
+  - Mutations carry an idempotency key in transaction metadata, used for
+    durable write deduplication. It does *not* police conflicts on the Cypher
+    path -- one key with two different payloads is accepted and both applied,
+    verified against a live node. Uniqueness comes from the key being derived
+    from the rows it sends (`ingest.batch_key`). The mapping below stays as a
+    net in case a future build starts enforcing it.
 
 Consistency is set per transaction: `strong` refreshes from object storage
 before pinning (used by evaluation, so scores reproduce), `causal` uses the
