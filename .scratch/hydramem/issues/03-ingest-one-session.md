@@ -37,6 +37,21 @@ correctly from the graph.
 - [ ] A hand-picked single-session question is answered correctly from the graph
 - [ ] All new statements are registered in the statement inventory and pass the verify target
 
+## Model configuration
+
+Extraction uses `nvidia/nemotron-3.5-lightning-30b-a3b` with **reasoning OFF**, set
+through the chat template rather than a prompt instruction. Reasoning models emit
+thinking tokens that break strict JSON parsing; one published study saw 80% of
+outputs fail to parse for this reason. This is the single highest-value setting in
+the pipeline and it is not optional.
+
+Model access goes through `hydramem/llm.py` — do not construct a provider client
+anywhere else, or the disk cache stops guaranteeing free reruns.
+
+Extraction windows at the **session** level. Only fall back to sliding 3-turn
+windows if a session exceeds the ceiling measured in slice 02, or if slice 06 shows
+session-level quality is materially worse.
+
 ## Blocked by
 
 01, 02
