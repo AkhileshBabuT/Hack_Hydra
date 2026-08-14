@@ -19,6 +19,16 @@ fires is a gate that will silently stop working.
 The remaining cases cover the answerable categories: single-session recall, a
 knowledge-update pair asserting current-versus-past, a multi-hop path, and a preference.
 
+## Seed the suite from what actually failed
+
+Slice 06 measured three defects on real data. They are cheaper to turn into
+fixtures than to rediscover:
+
+- a mis-slotted functional predicate retracting a true fact (`name: 'silver
+  Honda Civic'`)
+- a fact sourced from an assistant turn rather than a user turn (`ec81a493`)
+- a session whose extraction collapsed and was recovered only by the retry
+
 ## Acceptance criteria
 
 - [ ] Twenty-five fixtures exist and the suite completes in under ten seconds
@@ -27,6 +37,7 @@ knowledge-update pair asserting current-versus-past, a multi-hop path, and a pre
 - [ ] The uncited-answer downgrade has its own dedicated fixture
 - [ ] A knowledge-update fixture asserts the current value plainly and the old value when scoped to a past window
 - [ ] The suite runs from a single make target
+- [ ] At least one fixture reproduces a defect slice 06 measured on real data
 
 ## Blocked by
 

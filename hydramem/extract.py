@@ -9,7 +9,9 @@ emits thinking tokens ahead of the JSON and strict parsing then fails on most
 outputs -- this is the single highest-value setting in the pipeline.
 """
 
-from pydantic import BaseModel, Field, field_validator
+import re
+
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from . import llm
 
@@ -47,6 +49,8 @@ FUNCTIONAL_PREDICATES = frozenset([
 
 ENTITY_TYPES = ("person", "org", "place", "thing", "preference", "event")
 
+_WS = re.compile(r"\s+")
+
 # The extractor fills a required field rather than omitting the fact. These
 # are absences dressed as values and must never reach the graph as facts.
 EMPTY_VALUES = frozenset(
@@ -77,6 +81,14 @@ class ExtractedFact(BaseModel):
     @field_validator("turn_idx", mode="before")
     @classmethod
     def _digits_only(cls, v):
+        # A null turn is the extractor declining to say which turn -- the same
+        # gesture as a null string, and it must cost the same: nothing. Left
+        # unhandled it raised, and pydantic reports per-fact errors as one
+        # failed Extraction, so a single null turn threw away all 27 facts in
+        # the session. Worth 8 points of schema validity on the slice 06 sample
+        # (86.8% -> 94.7%); the session-loss rate was never a model problem.
+        if v is None:
+            return 0
         if isinstance(v, str):
             digits = "".join(c for c in v if c.isdigit())
             return int(digits) if digits else 0
@@ -124,6 +136,9 @@ Extract the durable facts as JSON: {{"facts": [...]}}"""
 SCHEMA_HINT = {"type": "json_object"}
 MAX_SPAN = 240
 MAX_OUTPUT_TOKENS = 8192
+# Enough to leave the collapsed greedy path, small enough that the output
+# is still the session's facts and not a paraphrase of them.
+RETRY_TEMPERATURE = 0.3
 
 
 def prompt(session, date: str) -> list[dict]:
@@ -163,21 +178,59 @@ def clean(facts: list[ExtractedFact], turn_count: int) -> list[ExtractedFact]:
     return out
 
 
-def extract_session(session, date: str, model: str = None) -> list[ExtractedFact]:
-    """One cached model call. Raises on unparseable output -- never swallows it.
+def grounded(span: str, session_text: str) -> bool:
+    """Is the evidence span actually in the session, or did the model write it?
 
-    A parse failure is a quality signal that slice 06 measures; counting it as
-    "zero facts" would hide it in the one place it must be visible.
+    Pure, so the hallucination check runs over fixtures with no model call. The
+    comparison is whitespace- and case-insensitive because the extractor
+    reflows quotes across line breaks; anything looser would stop catching
+    invention, which is the only thing this measures.
     """
-    result = llm.complete_json(
+    if not span.strip():
+        return False
+    flat = _WS.sub(" ", session_text).lower()
+    return _WS.sub(" ", span).strip().lower() in flat
+
+
+def _call(session, date: str, model: str, temperature: float) -> Extraction:
+    return llm.complete_json(
         prompt(session, date),
         Extraction,
         model=model or llm.EXTRACT_MODEL,
         reasoning=False,
+        temperature=temperature,
         # A dense session yields 30+ facts. At 4096 the response was truncated
         # mid-string and the whole session was lost to a JSON parse error --
         # which looked like a model quality problem and was ours.
         max_tokens=MAX_OUTPUT_TOKENS,
         response_format=SCHEMA_HINT,
     )
-    return clean(result.facts, len(session.turns))
+
+
+def extract_raw(session, date: str, model: str = None) -> Extraction:
+    """The model call alone, before clean() repairs anything.
+
+    Slice 06 needs both sides: the difference between this and the cleaned
+    output *is* the repair rate, and it is the evidence for whether the
+    controlled predicate vocabulary is adequate.
+
+    One retry at a nudged temperature, and only on unparseable output. Greedy
+    decoding collapses outright on roughly one session in twenty -- measured:
+    one returned the single character `{`, another a run of zero-width spaces --
+    and temperature is the only lever that reaches it. Retrying the *identical*
+    request cannot: the cache is keyed on the request, so a degenerate decode
+    is otherwise cached forever and that session is permanently lost.
+    """
+    try:
+        return _call(session, date, model, 0.0)
+    except ValidationError:
+        return _call(session, date, model, RETRY_TEMPERATURE)
+
+
+def extract_session(session, date: str, model: str = None) -> list[ExtractedFact]:
+    """One cached model call. Raises on unparseable output -- never swallows it.
+
+    A parse failure is a quality signal that slice 06 measures; counting it as
+    "zero facts" would hide it in the one place it must be visible.
+    """
+    return clean(extract_raw(session, date, model).facts, len(session.turns))

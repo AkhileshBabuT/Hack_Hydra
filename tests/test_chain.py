@@ -198,3 +198,37 @@ def test_reingest_cannot_resurrect_a_superseded_fact(driver, instance_id):
     ingest.write_rows(driver, rows)
     assert statuses(driver, instance_id) == after_first
     assert sum(1 for row in after_first if row[1] == "superseded") == 2
+
+
+# --- extraction noise the chain amplifies (measured, slice 06) -------------
+
+def test_a_mis_slotted_functional_predicate_retracts_a_true_fact():
+    """Instance `gpt4_2655b836`, hand-check sheet row 4: the extractor filed
+    `name: 'silver Honda Civic'`.
+
+    `name` is functional, so the car does not sit harmlessly beside the user's
+    real name -- it takes the slot and supersedes it. This is the amplification
+    CLAUDE.md records: only functional predicates chain, so a mis-slotted value
+    is not a cosmetic mislabel, it is a retraction of something true. It is also
+    why the hand-check counts a mis-slot as unsupported rather than as a minor
+    labelling error.
+    """
+    pairs = chain.derive(rows_for([
+        (SESSIONS[0], [fact(predicate="name", value="Ana")]),
+        (SESSIONS[1], [fact(predicate="name", value="silver Honda Civic")]),
+    ]))
+    assert [(a["value_text"], b["value_text"]) for a, b in pairs] == [
+        ("Ana", "silver Honda Civic"),
+    ]
+
+
+def test_the_same_mis_slot_on_a_non_functional_predicate_is_harmless():
+    """The contrast that makes the rule worth keeping. Had the extractor
+    reached for `likes` instead, both facts would coexist and nothing true
+    would have been retracted.
+    """
+    pairs = chain.derive(rows_for([
+        (SESSIONS[0], [fact(predicate="likes", value="Ana")]),
+        (SESSIONS[1], [fact(predicate="likes", value="silver Honda Civic")]),
+    ]))
+    assert pairs == []

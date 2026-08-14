@@ -1,6 +1,6 @@
 PY := ./.venv/Scripts/python.exe
 
-.PHONY: setup up down logs verify-cypher test clean
+.PHONY: setup up down logs verify-cypher test measure-extraction clean
 
 setup:
 	python -m venv .venv
@@ -30,6 +30,11 @@ verify-cypher:
 
 test:
 	$(PY) -m pytest -q
+
+# Slice 06 gate: extractor quality on a 20-instance slice. Blocks scaling
+# ingest to the full corpus. Cached, so a rerun costs nothing.
+measure-extraction:
+	$(PY) scripts/measure_extraction.py
 
 clean:
 	docker compose down -v
