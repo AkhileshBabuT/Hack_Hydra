@@ -134,20 +134,19 @@ model quality instead of retrieval quality.
 
 `origin` → **`https://github.com/AkhileshBabuT/Hack_Hydra`**, branch **`main`**
 (renamed from `master` when the remote was added). Slices 01–07 are pushed;
-`e495afe` is 06, `82181d4` is 07. **08 and 09 are complete in the working tree
-and not yet committed.** They share four files (`gates.py`, `answer.py`,
-`statements.py`, `CLAUDE.md`), so by the convention below they cannot be split
-into two commits without `git add -p` — and splitting them anyway would produce
-an 08 commit whose own tests do not pass, since `test_temporal.py` calls
-`gates.temporal_gate`. One commit naming both slices is the honest shape.
+`e495afe` is 06, `82181d4` is 07. Slices 08 and 09 landed **together** in
+`7a42e18` and are not yet pushed. They share four files (`gates.py`,
+`answer.py`, `statements.py`, `CLAUDE.md`), so by the convention below they
+could not be split without `git add -p` — and splitting them anyway would have
+produced an 08 commit whose own tests do not pass, since `test_temporal.py`
+calls `gates.temporal_gate`. The message names both slices for that reason.
 
 Verified before the first push and worth re-checking before any later one:
 `.env` has never been tracked, appears in no commit, and no `nvapi-` string
-exists anywhere in history. Tracked-file count was 47 at slice 07 and is 53
-now, with 5 files from slices 08-09 still untracked (`temporal.py`, `paths.py`,
-their two test modules, and issue 17) — re-count rather than trusting this
-line. `hydradb-data/` (which holds the dev auth token), `data/`, `.cache/` and
-`.codegraph/` are all gitignored.
+exists anywhere in history. Tracked-file count was 47 at slice 07 and is **58**
+at slice 09 — re-count rather than trusting this line. `hydradb-data/` (which
+holds the dev auth token), `data/`, `.cache/` and `.codegraph/` are all
+gitignored.
 
 **Write source files with the Write tool, not a Bash heredoc.** A multi-line
 `cat > file <<'EOF'` with a large Python body fails here with `unexpected EOF
