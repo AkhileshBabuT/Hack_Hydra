@@ -6,7 +6,8 @@ Hackathon submission, Track 03 — Memory + Context Retrieval.
 Facts are never mutated: a revision writes a new `Fact` plus a `SUPERSEDES` edge,
 so "what is X now" and "what did X used to be" are two traversals of one chain.
 Before any model is asked to answer, four structural gates decide whether the
-graph *can* — and each gate that fires returns a machine-readable reason.
+graph *can* — and each gate that fires returns a machine-readable reason. A
+question costs **at most four Bolt round trips**, counted rather than estimated.
 
 Planning artifacts live in `.scratch/hydramem/`. Do not restate their contents here.
 
@@ -40,8 +41,10 @@ hydramem/
   corpus.py       LongMemEval loader: streaming, whole sessions, epoch timestamps
   extract.py      session-level extraction, controlled predicates, output repair
   ingest.py       pure row builder + batched guarded writes
-  gates.py        gates 1-2: lexical entity/predicate resolution, no model
-  answer.py       gate cascade -> retrieve -> answer -> citation check -> abstain
+  temporal.py     windows, value-at-T, change history: pure, no driver, no model
+  paths.py        gate 4's one batched MSpaths call, escaping and instance scoping
+  gates.py        gates 1-4: lexical resolution, window, connectivity. No model
+  answer.py       gate cascade -> narrow -> answer -> citation check -> abstain
 scripts/probe_budget.py   slice 02 measurement gates -> docs/budget.md
 scripts/fetch_corpus.py   corpus download into data/ (gitignored)
 scripts/ingest_one.py     slice 03 demo: one instance, corpus -> answer
@@ -54,17 +57,18 @@ docs/extraction-review.md      60-fact hand-check sheet (generated)
 
 ## Where the build is
 
-Slices 01–07 are done; each issue in `.scratch/hydramem/issues/` carries its own
-acceptance detail and a Result section recording what changed and why. **08 is
-next** — the temporal gate. Gates 1 and 2 (`unknown_entity`, `no_such_relation`)
-are live in `answer.py`; gates 3 and 4 join the same `gates.run()` cascade.
+Slices 01–09 are done; each issue in `.scratch/hydramem/issues/` carries its own
+acceptance detail and a Result section recording what changed and why. **10 is
+next** — synthesis and the citation explain path. All four gates are live in
+`gates.run()`: `unknown_entity`, `no_such_relation`, `no_fact_in_window`,
+`no_path`.
 
 06 closed **GO** on three automatic gates — schema validity 100% (38/38),
 grounding 96.9%, `other` share 24.4%. Its hand-check sheet
 (`docs/extraction-review.md`) is generated and deterministic but **its tally is
 unfilled**: fact precision is not measured and no number in this repo claims
-otherwise. The two defects 06 measured and did not fix are recorded against the
-issues that inherit them, 07 and 10, not left as folklore here.
+otherwise. Slice 08 then found that the 24.4% `other` share is *not* benign —
+see issue 17.
 
 ## Non-negotiable conventions
 
@@ -96,6 +100,19 @@ would not notice a decoder that stops collapsing the same way. A defect a slice
 chooses *not* to fix goes on the issue that inherits it, with the test that
 demonstrates it.
 
+**Count, do not estimate.** The cost claim is "at most four Bolt round trips
+per question", and it is only worth making because `client.round_trips()`
+increments where the round trip happens and `answer.Result` reports the
+difference. A number tallied by whoever thinks they know how many reads they
+asked for is not a measurement.
+
+**Anything interpolated into a query text is a trust boundary.** HydraDB's
+native path parser will not take `$parameters` for its selector lists, so anchor
+keys — which come from model-extracted entity names — go into the query as
+literals. `paths.literal` escapes exactly (the lexer's own escape rule) and
+refuses what it cannot escape. Escape, never whitelist: a charset filter drops
+legitimate keys silently, which is the failure nobody notices.
+
 **Push logic into pure functions.** Gate predicates, chain derivation and temporal
 filters are tested over plain fact lists with no database and no model call. This
 is deliberate: the predicate gate is the primary suspect whenever abstention
@@ -112,6 +129,39 @@ elsewhere breaks the disk cache, and the cache is what keeps reruns at $0.
 **One answering model across every evaluation arm.** Full-context, vector RAG and
 HydraMem must differ *only* in their retrieval layer, or the comparison measures
 model quality instead of retrieval quality.
+
+## Repository
+
+`origin` → **`https://github.com/AkhileshBabuT/Hack_Hydra`**, branch **`main`**
+(renamed from `master` when the remote was added). Slices 01–07 are pushed;
+`e495afe` is 06, `82181d4` is 07. **08 and 09 are complete in the working tree
+and not yet committed.** They share four files (`gates.py`, `answer.py`,
+`statements.py`, `CLAUDE.md`), so by the convention below they cannot be split
+into two commits without `git add -p` — and splitting them anyway would produce
+an 08 commit whose own tests do not pass, since `test_temporal.py` calls
+`gates.temporal_gate`. One commit naming both slices is the honest shape.
+
+Verified before the first push and worth re-checking before any later one:
+`.env` has never been tracked, appears in no commit, and no `nvapi-` string
+exists anywhere in history. Tracked-file count was 47 at slice 07 and is 53
+now, with 5 files from slices 08-09 still untracked (`temporal.py`, `paths.py`,
+their two test modules, and issue 17) — re-count rather than trusting this
+line. `hydradb-data/` (which holds the dev auth token), `data/`, `.cache/` and
+`.codegraph/` are all gitignored.
+
+**Write source files with the Write tool, not a Bash heredoc.** A multi-line
+`cat > file <<'EOF'` with a large Python body fails here with `unexpected EOF
+while looking for matching`, leaving no file behind — silently, if you do not
+check. Small in-place edits through `python - <<'PY'` are fine.
+
+**Write a commit message to a file and use `git commit -F <file>`.** The Bash
+tool runs sh, so a PowerShell here-string (`@'…'@`) is parsed as a pathspec and
+the commit fails halfway through with a wall of "pathspec did not match" errors.
+
+**A file whose changes span two slices goes in the later commit.** Splitting one
+file across two commits needs `git add -p`, which is interactive and blocked
+here, and rewriting the file twice to fake a clean split would misreport what
+happened. CLAUDE.md landed whole in the slice-07 commit for this reason.
 
 ## HydraDB source reference
 
@@ -167,7 +217,12 @@ deliberate subset; assume nothing beyond it without testing.
   next `pytest` run and looks populated while holding no corpus at all. Check a
   real `instance_id` with `count_facts` before believing a graph has data.
   `count_label` cannot help — HydraDB has no dynamic labels, so it is hardcoded
-  to `:Entity` and its `label` parameter is ignored.
+  to `:Entity` and its `label` parameter is ignored. The store currently also
+  holds two *real* instances: `gpt4_2655b836` (3 sessions, 26 facts, 1 entity,
+  all on one day) and `89941a93` (knowledge-update, 2 sessions 231 days apart,
+  22 facts, 2 entities), ingested to verify gates 1–4 fire on something other
+  than fixtures. `89941a93` is the only instance in the store where a temporal
+  window can discriminate anything.
 - **Keep to 6 edge types.** CSC generations are built per edge type; `SUBJECT`
   and `OBJECT` carry the traversal load and stay dense because of it.
 
@@ -267,32 +322,47 @@ evidence sessions only and is the fast loop.
 - Abstention instances carry an `_abs` suffix on `question_id` (30 of 500 in the
   oracle split).
 
-## Known gaps as of slice 06
+## Known gaps as of slice 09
 
 Real, measured, and owned by a later slice. None of these are mysteries — they
 are debts with an address. Prune a line when its slice closes it.
 
-- **Retrieval is still ungated.** Gates 1–2 decide *whether* to answer; once
-  they pass, `answer.py` still feeds the whole instance subgraph to the model.
-  Narrowing what gets retrieved is slices 08–09.
-- **Gate 2 checks that a predicate slot is filled, never what is in it.** Live on
-  `gpt4_2655b836`: "What is my sister's name?" passes because the instance's only
-  `name` fact is the mis-slotted `silver Honda Civic`. Not fixable inside the
-  gate — it checks shape by construction. Pinned in
+- **`other` is a sink, and slice 06's "the vocabulary is adequate" was wrong.**
+  Measured on `89941a93`: 20 of 22 facts are `other`, including `three bikes`
+  and `four bikes` — the knowledge update the instance is built around. Gate 2
+  therefore abstains `no_such_relation: person:user has no owns` on the
+  instance's own question, and the chain produces **0** `SUPERSEDES` edges on a
+  knowledge-update instance. `other` is excluded from gate 2's wanted set by
+  design *and* is non-functional, so anything filed there is structurally
+  inert. Issue **17**; it needs a node wipe. Pinned in
+  `test_gates.py::test_other_is_a_sink_that_silently_disables_gate_2`.
+- **Gate 2 checks that a predicate slot is filled, never what is in it.** Live
+  on `gpt4_2655b836`: "What is my sister's name?" passes because the instance's
+  only `name` fact is the mis-slotted `silver Honda Civic`. Not fixable inside
+  the gate — it checks shape by construction. Pinned in
   `test_gates.py::test_the_gate_cannot_see_a_mis_slotted_value`.
+- **Gate 4 is close to vacuous on this corpus.** Its pass path is verified live;
+  its abstention is verified only against the hop bound (`maxLen=1` on anchors
+  that connect at 4). The corpus produces a star — 96.9% of facts sit on
+  `person:user` and every other entity is only ever the OBJECT of one of the
+  user's facts — so any two entities are ≤4 hops apart through the user and a
+  genuinely unreachable pair may not exist in this data. Lowering `MAX_LEN` to 2
+  would make it fire and would be wrong. It becomes load-bearing when entity
+  resolution does.
+- **The MSpaths traversal is not instance-scoped, only its results are.**
+  `paths.scoped()` drops foreign paths, but the work is shared across tenants
+  and most of the result budget is spent on paths that are then discarded (6
+  tenants matched, 1 path ours). With enough tenants sharing an anchor key a
+  real path could be crowded out and read as `no_path`. Needs an
+  instance-scoped Entity property, which costs a node wipe.
 - **The alias closure is still unproven on real data.** `ALIASES_FOR_INSTANCE`
   returns nothing on every instance measured so far, so gate 1's alias path is
-  proven synthetically or not at all.
+  proven synthetically or not at all. `alias_pairs` produced **0** `ALIAS_OF`
+  edges across 41 real sessions.
 - **The citation check is lenient.** An answer survives if *any* cited id is in
   the retrieved set; invented ids are filtered out rather than being fatal.
   Slice 10 has to decide whether a fabricated id sitting beside a valid one is
   still `uncited_answer`.
-- **Entity resolution is unexercised, and gate 1 works anyway.** `alias_pairs`
-  produced **0** `ALIAS_OF` edges across 41 real sessions; 96.9% of facts sit on
-  `person:user`. Slice 07 verified `unknown_entity` on a live node — it fires on
-  `maya chen` and `priya` against a graph holding one entity — so the gate is
-  load-bearing precisely *because* the graph is that sparse. The alias path
-  itself remains synthetic-only.
 - **Fact precision is not measured.** Slice 06 closed schema validity (100%,
   38/38) and grounding (96.9% — an automatic *floor* that catches invented
   quotes and nothing else). Precision needs a human reading
@@ -301,27 +371,26 @@ are debts with an address. Prune a line when its slice closes it.
 - **The extractor attributes assistant suggestions to the user.** Instance
   `ec81a493` filed three `prefers` facts quoting the assistant's own advice
   ("Choose a harmonious frame"), which the prompt forbids outright. Grounding is
-  no defence — those three were flagged only because the quote was reflowed, and
-  an exact copy of assistant text is grounded by definition. Slice 10's citation
-  check is the only place it can be caught; owned there.
+  no defence — an exact copy of assistant text is grounded by definition. Slice
+  10's citation check is the only place it can be caught; owned there.
 - **Predicate assignment is unreliable** — e.g. `budget: '2-Day General
   Admission'`, and measured again in slice 06 as `name: 'silver Honda Civic'`.
   Because only functional predicates chain, a mis-slotted value can supersede a
   real one, so extraction noise is *amplified* by the chain rather than diluted
   by it, and the retraction is pinned in
   `test_chain.py::test_a_mis_slotted_functional_predicate_retracts_a_true_fact`.
-  The hand-check sheet marks these `P` and counts them as unsupported. Slice 07
-  confirmed the consequence live rather than closing it: gate 2 passes on a
-  `name` fact whose value is a car, and no gate can catch that.
-- **The controlled vocabulary was confirmed adequate, not extended.** `other`
-  takes 24.4% of facts; the off-vocabulary tail has no cluster worth a new
-  predicate. Extending it costs a node wipe, so it stays as it is.
-- **A restatement moves `valid_from` forward.** The newest identical assertion
-  becomes the current fact, so "since when has X been true" answers the latest
-  mention, not the first. Slice 08 must decide whether an unchanged value should
-  keep the earliest `valid_from`.
-- **Vague dates collapse to assertion time.** `resolve_valid_from` parses numeric
-  shapes only; "last summer" falls back to the session timestamp. Slice 08.
+- **Vague dates still collapse to assertion time at ingest, deliberately.**
+  `resolve_valid_from` parses numeric shapes only; "last summer" falls back to
+  the session timestamp. Slice 08 decided *not* to extend it: at ingest there is
+  no reliable anchor for a seasonal or fiscal phrase, and a confidently wrong
+  precise date is worse than an honest approximate one, since the temporal gate
+  filters on exactly that field. Relative phrasing is resolved at **query** time
+  instead, where `asked_at` is a real anchor.
+- **The oracle split's sessions are often same-day.** On `gpt4_2655b836` all
+  three sessions and all 26 facts sit on `2023-04-10`, so year and month windows
+  cannot discriminate there at all. Any claim about temporal precision has to be
+  made against multi-month instances like `89941a93` (231 days) or the `_s`
+  split.
 - **Same-turn ties are arbitrary.** Two facts sharing entity, predicate and turn
   are ordered by node id — deterministic across processes, but not meaningful.
 - **`client.IdempotencyConflict` cannot fire** on the Cypher path. It is a
@@ -329,30 +398,122 @@ are debts with an address. Prune a line when its slice closes it.
 - **The statement inventory probes with empty rows**, so it proves a statement
   parses, not that it runs. Edge statements in particular pass the probe and then
   fail on real rows if an endpoint is missing.
+- **`round_trips()` is a module-level counter.** Correct for this single-threaded
+  harness and wrong the moment two questions are answered concurrently.
 
 ## Gate cascade
 
 `gates.run()` runs gates in order and short-circuits on the first failure, so a
-question already lost costs no further round trips. `gates.facts_reader()`
-memoises the per-entity fetch, so a later gate re-reading the same entity is
-free. Adding a gate is appending to that cascade.
+question already lost costs no further round trips. Adding a gate is appending
+to that cascade. The four, and what each costs:
+
+| gate | reason code | round trips to reach it |
+|---|---|---|
+| 1 entity | `unknown_entity` | 2 (entities, aliases) |
+| 2 predicate | `no_such_relation` | 3 (+ the shared instance fact read) |
+| 3 window | `no_fact_in_window` | 3 (same read, already in hand) |
+| 4 path | `no_path` | 4 (+ one batched `algo.MSpaths`), multi-entity only |
+
+`gates.facts_reader(read, instance_id)` returns `(all_facts, facts_for)` from
+**one lazy instance-wide read**, shared by gates 2 and 3 *and* the answer.
+Slice 07 read per entity and then read the same rows again to answer; that is
+what made four trips reachable. `FACTS_FOR_ENTITY` has no callers and is gone.
+`client.round_trips()` counts them where they happen — `answer.Result` reports
+`round_trips` per question, and the 2/3/4 budget is pinned in `test_paths.py`.
 
 - **A predicate name's glue words are not part of its meaning.** Matching any
   word of `subscribes_to` meant every question containing "to" wanted it, so
   gate 2 found a held predicate on almost anything and silently stopped firing.
   Found by probing a live graph; the unit tests all passed. Cues match on word
   boundaries for the same reason — `"work" in "homework"` is true.
+- **A capitalised calendar word is a date, not a name.** Gate 1 read "February"
+  in *"How many bikes did I have in February 2023?"* as a proper noun, found no
+  such entity, and abstained `unknown_entity: february` — so every temporal
+  question was lost behind gate 1 and gate 3 could never run. `gates._CALENDAR`
+  drops months, weekdays and a few holidays. Found by probing slice 08 live.
 - **Probe a new gate against a real ingested instance before believing it.**
-  A gate that never fires is indistinguishable from a gate that is broken, and
-  both of this slice's real bugs were invisible to the suite.
+  A gate that never fires is indistinguishable from a gate that is broken.
+  Every bug in the *lexical* layer across slices 07-09 was invisible to the
+  suite — glue words in slice 07, calendar words in slice 08 — because a
+  fixture exercising a recogniser is written by whoever wrote the recogniser,
+  so it tests the same blind spot twice. The suite does catch structural
+  mistakes: `test_statements.py` caught `MS_PATHS` being defined but not
+  registered within a minute of it being written.
+
+### Gate 3: the temporal gate
+
+`temporal.parse_window` is a small ordered regex table and resolves only shapes
+a reader would call unambiguous. **Directional forms are matched first** —
+"before 2021" also contains the shape "<preposition> 2021" and matched later
+resolves to the opposite window. There is deliberately **no bare-month form**:
+"in May" is not distinguishable from the verb, and a wrong window abstains
+silently. Relative phrasing needs `asked_at`; without an anchor it resolves to
+nothing rather than to the wall clock, so an evaluation does not change answer
+in January.
+
+`valid_to == 0` means *unbounded*, not "ended at the epoch". Most facts are
+open, so reading it as a real end date empties every window — this is the one
+line in `temporal.overlaps` worth re-reading before changing anything.
+
+A window narrows retrieval as well as gating it: `answer_question` sends the
+model only the facts valid in the window, so the plain question returns the
+current value and the scoped question returns the old one. Verified on
+`89941a93`: "how many bikes do I have" → four, "…in February 2023" → three,
+"…in 2020" → `no_fact_in_window`.
+
+### Gate 4: one batched MSpaths call
+
+`CALL algo.MSpaths({...}) YIELD path RETURN path` **is the whole query** —
+HydraDB's native path parser ends with `parser.end()`, so no `WHERE`, no
+`LIMIT`, nothing may follow. Consequences that are not optional:
+
+- **`sourceValues` / `targetValues` / `relTypes` cannot be `$parameters`.**
+  `config_string_list` does not resolve them, so anchor keys are interpolated
+  into query text — and they derive from model-extracted entity names.
+  `paths.literal` escapes backslash and quote (exact, per the lexer's escape
+  rule) and refuses control characters. `maxLen` and `resultLimit` *are*
+  parameterizable, so the bound stays a bound.
+- **The selector is not instance-scoped.** It matches `(:Entity {key: …})` and
+  every tenant has a `person:user`, so an unfiltered result connects entities
+  through other people's graphs. Measured: one anchor pair matched **6 tenants,
+  6 paths, 1 ours**. `paths.scoped()` drops the rest. The traversal work is
+  still shared, so most of the result budget is spent on paths that get
+  discarded; scoping it properly needs an instance-scoped Entity property,
+  which is a node wipe.
+- **Unknown config keys are rejected outright**, and `fairRelationshipVariants`
+  requires pairwise MSpaths and rejects weightProp / costProp / maxCost. It is
+  what round-robins the result budget across structural paths.
+- `path` returns a **flat list**: `[node-map, 'EDGE_TYPE', node-map, …]`. Node
+  maps carry every property except `id`; Fact maps carry `fact_id`.
+- **An entity-valued fact needs `value_is_entity`, not just a predicate in
+  `ingest.OBJECT_TYPES`.** `OBJECT_TYPES` only decides what *type* the object
+  entity gets; the flag is what makes ingest create it and write the `OBJECT`
+  edge at all. Without it "Acme" stays a literal string on the fact, `org:acme`
+  never exists, and gate 4 reports `no_path` — a missing entity failing as a
+  missing *route*, which sends you to the wrong module. It showed up in slice
+  09 as a test-fixture bug; the fixture in `test_paths.py` says so in place.
+- `MS_PATHS` is a template, so the inventory registers its **assembled** form —
+  a statement whose assembled shape is never parsed is exactly what the
+  inventory exists to catch, and `test_statements.py` now checks templates by
+  their literal prefix.
 
 ## Traps
 
 - **Never let a probe measure its own cache.** Both throughput and latency
   measurements silently reported cache speed once (166,330 RPM; 1M tokens in
   0.0s). Uncached calls need a nonce; real latencies persist to a sidecar.
-- **`.env` is gitignored and the repo is public.** A key in git history survives
-  deletion.
+- **The repo is public and `.env` is gitignored.** No longer aspirational — it
+  is on GitHub as of slice 07. A key in git history survives deletion, so the
+  check is worth repeating before a push, not just before the first one.
+- **Slice 08 changed the answering prompt and the fact line, so no number
+  measured before it is comparable.** `fact_line` now dates a fact by
+  `valid_from` rather than `asserted_at` (the two differ only when the
+  extractor found a date, and it is `valid_from` that answers "when was this
+  true"), and marks a closed fact `[superseded <date>]` with a system-prompt
+  rule telling the model that means *not true now*. Without that marker the
+  model reads a retracted employer and a current one as two equally live facts.
+  Every arm shares this line, so the comparison stays fair — but a score from
+  before slice 08 is not the same measurement.
 - **No commit may predate Aug 12 2026** — it is a disqualification criterion.
 - Report only within-harness comparisons. Published LongMemEval figures were
   measured with different answering models, embedders and judges; cite them

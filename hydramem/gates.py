@@ -1,5 +1,6 @@
-"""Gates 1 and 2 of the abstention cascade: does the graph *have* the subject,
-and does it have anything of the right shape to say about it.
+"""Gates 1-3 of the abstention cascade: does the graph *have* the subject, does
+it have anything of the right shape to say about it, and does it have anything
+inside the window the question asked about.
 
 Both are pure functions of (question, rows). No model is asked anything here,
 and that is the point rather than an optimisation: a gate whose job is to stop
@@ -23,7 +24,7 @@ import functools
 import re
 from dataclasses import dataclass, field
 
-from . import extract, statements
+from . import extract, statements, temporal
 
 SELF_KEY = "person:user"
 
@@ -47,6 +48,20 @@ _SENTENCE_STARTERS = frozenset(
     ["what", "when", "where", "who", "why", "how", "which", "did", "do", "does",
      "is", "was", "are", "were", "has", "have", "had", "can", "could", "should",
      "would", "will", "the", "a", "an", "my", "i", "in", "on", "at", "if", "tell"]
+)
+
+# A capitalised month or weekday is a date, not a name. Found by probing slice
+# 08 against instance `89941a93`: "How many bikes did I have in February 2023?"
+# abstained `unknown_entity: february`, because gate 1 read the month as an
+# entity the graph had never seen. Temporal questions are made of these, so the
+# gate slice 08 adds was unreachable behind the gate slice 07 added.
+#
+# Dropping a candidate makes gate 1 *pass* more, which is the safe direction
+# (see BIAS). The cost is that a person actually called May is invisible to
+# gate 1, which is a trade the corpus does not care about.
+_CALENDAR = frozenset(temporal.MONTHS) | frozenset(
+    ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+     "today", "tomorrow", "yesterday", "christmas", "easter", "thanksgiving"]
 )
 
 # Question phrasing -> candidate predicates. Only paraphrases a reader would
@@ -135,6 +150,8 @@ def mentions(question: str) -> list:
             if not rest:
                 continue
             lowered = rest.lower()
+        if lowered in _CALENDAR:
+            continue
         if lowered not in found:
             found.append(lowered)
     if any(w in SELF_CUES for w in _WORDS.findall(question.lower())):
@@ -265,41 +282,112 @@ def predicate_gate(question: str, facts: list, entity_key: str = "") -> GateResu
     return GateResult(False, "no_such_relation", f"{where}{missing}")
 
 
-def run(question: str, entities: list, aliases: dict, facts_for) -> GateResult:
-    """Gates 1 and 2 in order, short-circuiting on the first that fires.
+def temporal_gate(question: str, facts: list, asked_at: int = None,
+                  entity_key: str = "") -> GateResult:
+    """Gate 3. A question scoped to a time window needs a fact valid in it.
 
-    `facts_for(entity_key) -> list` is passed in rather than a driver, so the
-    cascade is exercisable end to end with a dict and no database.
+    No window in the question means no opinion: `parse_window` returns None for
+    everything it cannot read, and that passes. When a window *is* resolved,
+    the abstention names it -- "no fact valid in 2019 (2019-01-01..2020-01-01)"
+    is auditable in a way that "no" is not, and the resolved bounds are the
+    first thing to check when the abstention is wrong.
+
+    The window is applied to the predicates gate 2 named, when it named any, so
+    "where did I work in 2019" asks about employment in 2019 rather than about
+    any fact at all in 2019. If that intersection is empty the whole fact set
+    is used instead: an empty scope is this gate failing to read the question,
+    not evidence the graph is silent.
+    """
+    window = temporal.parse_window(question, asked_at)
+    if window is None:
+        return PASS
+
+    wanted = question_predicates(question)
+    scoped = [f for f in facts if f.get("predicate") in wanted] if wanted else []
+    if temporal.in_window(scoped or facts, window):
+        return GateResult(True, resolved=(entity_key,) if entity_key else ())
+
+    where = f"{entity_key} has no " if entity_key else "no "
+    return GateResult(False, "no_fact_in_window", f"{where}fact valid {window.detail}")
+
+
+def path_gate(resolved, find_paths) -> GateResult:
+    """Gate 4. Entities the question relates must actually be connected.
+
+    A question naming one entity is not multi-hop and costs no path call: there
+    is no pair to connect. With two or more, `find_paths` resolves *every* pair
+    in one batched call rather than a traversal per pair, which is the whole
+    point of the gate and the reason the round-trip count stays flat as the
+    anchor count grows.
+
+    The abstention names the pairs tried and the hop bound, because "no path"
+    on its own cannot be told apart from a bound that was set too low.
+    """
+    if len(resolved) < 2:
+        return PASS
+
+    found = find_paths(resolved)
+    if found.paths:
+        return GateResult(True, resolved=tuple(resolved))
+    return GateResult(False, "no_path", f"{', '.join(resolved)}: {found.detail}")
+
+
+def run(question: str, entities: list, aliases: dict, facts_for,
+        asked_at: int = None, find_paths=None) -> GateResult:
+    """Gates 1-4 in order, short-circuiting on the first that fires.
+
+    `facts_for(entity_key) -> list` and `find_paths(keys) -> paths.PathResult`
+    are passed in rather than a driver, so the cascade is exercisable end to end
+    with a dict, a stub and no database. `find_paths=None` skips gate 4, which
+    is how every pure test of gates 1-3 stays a pure test.
     """
     gate1 = entity_gate(question, entities, aliases)
     if not gate1.passed:
         return gate1
 
-    # Any one resolved entity holding the predicate is enough: "did Maya and I
-    # go to Berlin" is answerable from either side of the pair.
-    last = PASS
+    # Any one resolved entity clearing gates 2 and 3 is enough: "did Maya and I
+    # go to Berlin" is answerable from either side of the pair. The verdict
+    # carried out of the loop is the last *failure*, which is what names the
+    # thing that was missing.
+    verdict = PASS
     for key in gate1.resolved:
-        last = predicate_gate(question, facts_for(key), key)
-        if last.passed:
-            return GateResult(True, resolved=gate1.resolved)
-    return last
+        facts = facts_for(key)
+        verdict = predicate_gate(question, facts, key)
+        if verdict.passed:
+            verdict = temporal_gate(question, facts, asked_at, key)
+        if verdict.passed:
+            break
+    if not verdict.passed:
+        return verdict
+
+    if find_paths is None:
+        return GateResult(True, resolved=gate1.resolved)
+    gate4 = path_gate(gate1.resolved, find_paths)
+    return gate4 if not gate4.passed else GateResult(True, resolved=gate1.resolved)
 
 
-def facts_reader(driver, entities: list, read):
-    """`facts_for` backed by the graph, one round trip per entity, memoised.
+def facts_reader(read, instance_id: str):
+    """Returns `(all_facts, facts_for)`, both backed by one lazy instance read.
 
-    Gate 2 asks about one entity in the common case; the cache only matters for
-    the multi-entity question, where it stops a re-ask costing a second trip.
+    Slice 07 fetched per entity, which cost a round trip for each entity gate 1
+    resolved and then a *second* fetch of the same rows for the answer. One
+    instance-wide read serves gates 2 and 3 and the answer, which is what makes
+    the four-round-trip budget in slice 09 reachable at all.
+
+    Lazy, not eager: a question that loses at gate 1 still costs no fact read.
+    Splitting by subject in Python rather than in Cypher is the same trade gate
+    2 already makes -- HydraDB's WHERE has no IN, and one read of tens of rows
+    beats one read per entity.
     """
-    by_key = {e["key"]: e["id"] for e in entities}
     cache = {}
 
-    def facts_for(entity_key: str) -> list:
-        if entity_key not in cache:
-            eid = by_key.get(entity_key)
-            cache[entity_key] = [] if eid is None else read(
-                statements.FACTS_FOR_ENTITY, {"eid": eid}
-            )
-        return cache[entity_key]
+    def all_facts() -> list:
+        if "rows" not in cache:
+            cache["rows"] = read(statements.FACTS_FOR_INSTANCE,
+                                 {"instance_id": instance_id})
+        return cache["rows"]
 
-    return facts_for
+    def facts_for(entity_key: str) -> list:
+        return [f for f in all_facts() if f.get("subject_key") == entity_key]
+
+    return all_facts, facts_for

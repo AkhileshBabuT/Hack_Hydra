@@ -30,9 +30,19 @@ def test_inventory_covers_every_exported_statement():
     registered = {
         statement.strip() for statement, _ in statements.INVENTORY.values()
     }
+    # A statement assembled at call time (`MS_PATHS`, whose anchor list cannot
+    # be a parameter) is registered in its *filled* form, which is the form the
+    # parser has to accept. It is covered when some registered statement shares
+    # its literal prefix -- the text up to the first substitution.
+    templates = {name for name in exported if "{" in getattr(statements, name)}
     missing = [
         name
-        for name in exported
+        for name in exported - templates
         if getattr(statements, name).strip() not in registered
     ]
     assert not missing, f"statements not in INVENTORY: {sorted(missing)}"
+
+    for name in templates:
+        head = getattr(statements, name).split("{", 1)[0].strip()
+        assert any(statement.startswith(head) for statement in registered), \
+            f"{name} is assembled but no assembled form is probed"

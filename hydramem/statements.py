@@ -167,21 +167,6 @@ RETURN e.key AS key, e.name AS name, e.type AS type,
        e.first_seen AS first_seen, e.last_seen AS last_seen
 """
 
-# Gate 2 pulls every fact on the entity in one round trip and applies the
-# candidate predicate set in Python -- WHERE has no IN, and the predicate gate
-# is the primary suspect when abstention precision fails, so it has to be
-# debuggable without a database.
-FACTS_FOR_ENTITY = """
-MATCH (f:Fact)-[:SUBJECT]->(e:Entity {id: $eid})
-RETURN f.id AS id, f.fact_id AS fact_id, f.predicate AS predicate,
-       f.value_text AS value_text, f.value_type AS value_type,
-       f.valid_from AS valid_from, f.valid_to AS valid_to,
-       f.asserted_at AS asserted_at, f.status AS status,
-       f.session_id AS session_id, f.turn_idx AS turn_idx,
-       f.snippet AS snippet, f.confidence AS confidence
-ORDER BY asserted_at
-"""
-
 FACTS_FOR_INSTANCE = """
 MATCH (f:Fact)-[:SUBJECT]->(e:Entity)
 WHERE f.instance_id = $instance_id
@@ -201,6 +186,22 @@ RETURN old.id AS id, old.fact_id AS fact_id, old.predicate AS predicate,
        old.value_text AS value_text, old.valid_from AS valid_from,
        old.valid_to AS valid_to, old.asserted_at AS asserted_at,
        old.status AS status
+"""
+
+# The change history as graph structure: every revision in the instance, with
+# the value it replaced and the date it replaced it. One round trip for the
+# whole instance, because HydraDB has no variable-length pattern -- the chain is
+# reassembled from these pairs, or derived from the fact list by
+# `temporal.history`, and slice 08's live test asserts the two agree.
+SUPERSESSION_CHAIN_FOR_INSTANCE = """
+MATCH (new:Fact)-[r:SUPERSEDES]->(old:Fact)
+WHERE new.instance_id = $instance_id
+RETURN new.fact_id AS new_fact_id, new.value_text AS new_value,
+       new.valid_from AS changed_at, new.predicate AS predicate,
+       old.fact_id AS old_fact_id, old.value_text AS old_value,
+       old.valid_from AS old_valid_from, old.valid_to AS old_valid_to,
+       old.status AS old_status
+ORDER BY changed_at
 """
 
 COUNT_EDGES_SUPERSEDES = """
@@ -230,6 +231,38 @@ ALIASES_FOR_INSTANCE = """
 MATCH (a:Entity)-[r:ALIAS_OF]->(b:Entity)
 WHERE a.instance_id = $instance_id
 RETURN a.key AS alias_key, b.key AS canonical_key
+"""
+
+# Gate 4. One pairwise path call for every candidate anchor at once, instead of
+# a round trip per pair. Verified against the HydraDB parser
+# (`src/query/path_procedure.rs`) and live:
+#
+#   - The call must be the *whole* query. `parse_native_path_call` ends with
+#     `parser.end()`, so no MATCH, no WHERE, no LIMIT may follow it. That is why
+#     the instance filter is applied client-side in `paths.py` -- there is
+#     nowhere in this statement to put it.
+#   - Unknown config keys are rejected outright, and `sourceValues` /
+#     `targetValues` / `relTypes` must be *literal* lists: `config_string_list`
+#     never resolves a `$parameter`. Hence the interpolation, and hence
+#     `paths.literal` escaping what it interpolates.
+#   - `maxLen` and `resultLimit` *are* parameterizable (`config_u64` accepts a
+#     parameter), so the bound stays a bound and not a string.
+#   - `fairRelationshipVariants` requires pairwise MSpaths and rejects any of
+#     weightProp / costProp / maxCost. It is what distributes the result budget
+#     round-robin across structural paths, so one hyper-connected entity cannot
+#     consume the whole response.
+#   - `pairwise` enumerates each unordered pair once (the shard filters
+#     `source < target`), so n anchors cost n(n-1)/2 pairs in one call.
+#
+# `path` comes back as a flat list: [node-map, 'EDGE_TYPE', node-map, ...].
+MS_PATHS = """
+CALL algo.MSpaths({{
+  sourceLabel: 'Entity', sourceProperty: 'key', sourceValues: [{anchors}],
+  targetLabel: 'Entity', targetProperty: 'key', targetValues: [{anchors}],
+  pairwise: true, fairRelationshipVariants: true,
+  relTypes: ['SUBJECT', 'OBJECT'], relDirection: 'both',
+  maxLen: $max_len, resultLimit: $result_limit
+}}) YIELD path RETURN path
 """
 
 COUNT_FACTS = """
@@ -271,14 +304,20 @@ INVENTORY = {
     "subject_of_fact": (SUBJECT_OF_FACT, {"fid": 0}),
     "count_label": (COUNT_LABEL, {}),
     "entity_by_id": (ENTITY_BY_ID, {"eid": 0}),
-    "facts_for_entity": (FACTS_FOR_ENTITY, {"eid": 0}),
     "facts_for_instance": (FACTS_FOR_INSTANCE, {"instance_id": "__probe__"}),
     "aliases_of_entity": (ALIASES_OF_ENTITY, {"eid": 0}),
     "entities_for_instance": (ENTITIES_FOR_INSTANCE, {"instance_id": "__probe__"}),
     "aliases_for_instance": (ALIASES_FOR_INSTANCE, {"instance_id": "__probe__"}),
     "superseded_by_fact": (SUPERSEDED_BY_FACT, {"fid": 0}),
+    "supersession_chain_for_instance": (SUPERSESSION_CHAIN_FOR_INSTANCE,
+                                        {"instance_id": "__probe__"}),
     "count_edges_supersedes": (COUNT_EDGES_SUPERSEDES, {"instance_id": "__probe__"}),
     "count_facts": (COUNT_FACTS, {"instance_id": "__probe__"}),
     "count_entities": (COUNT_ENTITIES, {"instance_id": "__probe__"}),
     "count_edges_subject": (COUNT_EDGES_SUBJECT, {"instance_id": "__probe__"}),
+    # Probed fully formed, not as a template: this one is assembled at call
+    # time, and a statement whose *assembled* shape is never parsed is exactly
+    # the statement the inventory exists to catch.
+    "ms_paths": (MS_PATHS.format(anchors="'__probe__'"),
+                 {"max_len": 2, "result_limit": 1}),
 }

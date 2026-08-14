@@ -36,6 +36,22 @@ TX_CONSISTENCY = "hydradb.consistency"
 TX_IDEMPOTENCY_KEY = "hydradb.idempotency_key"
 
 
+# Bolt round trips issued by this process. The cost story turns on this number
+# and it only means anything if it is counted rather than estimated, so it is
+# incremented where the round trip actually happens rather than tallied by
+# whoever thinks they know how many they asked for.
+#
+# ponytail: a module-level int, not a per-driver counter or a metrics object.
+# Every read and write in this codebase goes through this module and the harness
+# is single threaded. Take a difference around the call you care about; make it
+# per-driver when something concurrent needs it.
+_round_trips = 0
+
+
+def round_trips() -> int:
+    return _round_trips
+
+
 class IdempotencyConflict(RuntimeError):
     """A key was reused with different content.
 
@@ -64,6 +80,8 @@ def write(driver, statement, params=None, idempotency_key=None, bookmarks=None):
     metadata on the query. Ingest is therefore idempotent batched writes, not
     transactional units, and must be safe under at-least-once delivery.
     """
+    global _round_trips
+    _round_trips += 1
     metadata = {TX_CONSISTENCY: "causal"}
     if idempotency_key is not None:
         metadata[TX_IDEMPOTENCY_KEY] = idempotency_key
@@ -81,6 +99,8 @@ def write(driver, statement, params=None, idempotency_key=None, bookmarks=None):
 
 def read(driver, statement, params=None, bookmarks=None, consistency="causal"):
     """Run one read. Passing the bookmark from a write gives read-your-writes."""
+    global _round_trips
+    _round_trips += 1
     query = neo4j.Query(statement, metadata={TX_CONSISTENCY: consistency})
     with driver.session(bookmarks=bookmarks) as s:
         return [r.data() for r in s.run(query, **(params or {}))]

@@ -48,6 +48,26 @@ def test_a_name_is_found_mid_sentence():
     assert "berlin" in gates.mentions("How long did I stay in Berlin?")
 
 
+@pytest.mark.parametrize("question", [
+    "How many bikes did I have in February 2023?",
+    "What did I buy on Monday?",
+    "Where was I at Christmas?",
+])
+def test_a_calendar_word_is_a_date_not_an_entity(question):
+    """Slice 08's real bug, found by probing instance `89941a93` and invisible
+    to this suite until then: gate 1 read "February" as a proper noun, found no
+    such entity, and abstained `unknown_entity: february` on a question the
+    graph could answer. Every temporal question carries one of these, so gate 3
+    was unreachable behind gate 1.
+    """
+    assert gates.mentions(question) == [gates.SELF_KEY]
+
+
+def test_a_real_name_beside_a_month_still_resolves():
+    """The fix drops calendar words, not every capitalised run near one."""
+    assert "maya chen" in gates.mentions("Did Maya Chen call me in February?")
+
+
 # --- gate 1: unknown_entity -----------------------------------------------
 
 def test_an_entity_the_graph_never_saw_abstains_and_names_itself():
@@ -169,6 +189,28 @@ def test_the_gate_cannot_see_a_mis_slotted_value():
         "What is my name?", [fact("name", "silver Honda Civic")], gates.SELF_KEY
     )
     assert result.passed
+
+
+def test_other_is_a_sink_that_silently_disables_gate_2():
+    """Measured live on instance `89941a93` while probing slice 08. The
+    extractor filed "three bikes" and "four bikes" as `other`, so:
+
+      - gate 2 abstains `no_such_relation: person:user has no owns` on "how
+        many bikes do I currently own", a question the graph *does* answer, and
+      - `other` is non-functional and the two values differ, so the chain never
+        forms: 22 facts, 0 SUPERSEDES edges, on a knowledge-update instance.
+
+    Both halves are pinned here as the real payload, not a paraphrase. The gate
+    is behaving as specified -- it is the 24.4% `other` share that is not
+    benign, and CLAUDE.md's "confirmed adequate" reading of it was wrong. Owned
+    by issue 17, which costs a node wipe and so is not slice 08's to close.
+    """
+    facts = [fact("other", "three bikes"), fact("other", "four bikes"),
+             fact("goal", "century ride")]
+    result = gates.predicate_gate("How many bikes do I currently own?", facts,
+                                  gates.SELF_KEY)
+    assert not result.passed
+    assert result.detail == "no_such_relation: person:user has no owns"
 
 
 # --- the cascade ----------------------------------------------------------

@@ -54,8 +54,15 @@ def main(argv: list) -> int:
     )
     print(f"\nanswer:   {result.answer}")
     print(f"gold:     {instance.answer}")
+    # The two numbers slices 08 and 09 exist to produce: the window the question
+    # was read as scoping itself to, and the round trips it actually cost.
+    if result.window:
+        print(f"window:   {result.window}")
+    print(f"trips:    {result.round_trips} bolt round trips")
     if result.abstained:
-        print(f"abstained: {result.reason}")
+        # gate_detail already leads with the reason code and names what was
+        # missing; the bare reason is only what is left when no gate fired.
+        print(f"abstained: {result.gate_detail or result.reason}")
     else:
         print(f"cited:    {result.cited_fact_ids} of {result.fact_count} facts")
     driver.close()
