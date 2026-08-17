@@ -109,8 +109,11 @@ Oracle split, n=150 per arm, generated in `docs/eval/`. Regenerate with
 | arm | acc | ans acc | coverage | selective | abs prec | abs recall | tokens/q |
 |---|---|---|---|---|---|---|---|
 | full_context | 0.6200 | 0.5750 | 0.6200 | 0.7419 | **0.4211** | 0.8000 | 5,540 |
-| vector_rag | **0.6467** | **0.5833** | 0.5667 | 0.8235 | 0.4154 | 0.9000 | **2,494** |
-| hydramem | 0.6000 | 0.5167 | 0.5000 | 0.8267 | 0.3733 | **0.9333** | 2,608 |
+| vector_rag | **0.6467** | **0.5833** | 0.5667 | **0.8235** | 0.4154 | 0.9000 | **2,494** |
+| hydramem | 0.6200 | 0.5417 | 0.5333 | 0.8125 | 0.4000 | **0.9333** | 2,743 |
+
+**HydraMem has caught full_context on accuracy** — 0.6200 each. Vector RAG
+leads by 2.67 points, down from 15.3 at slice 17.
 
 Per category, and this is where the thesis lives or dies:
 
@@ -119,9 +122,9 @@ Per category, and this is where the thesis lives or dies:
 | knowledge-update | **0.8846** | 0.5769 | 0.6538 |
 | temporal-reasoning | **0.6923** | 0.3846 | 0.4615 |
 | multi-session | **0.5000** | 0.5000 | 0.4688 |
+| single-session-assistant | 0.4500 | **1.0000** | 0.9000 |
 | single-session-preference | 0.4000 | 0.4500 | **0.5000** |
 | single-session-user | 0.7308 | 0.8846 | **0.9615** |
-| single-session-assistant | 0.3000 | **1.0000** | 0.9000 |
 
 **HydraMem wins the two categories the architecture exists for, by wide
 margins** — knowledge-update by 23 points over the better baseline and temporal
@@ -130,32 +133,44 @@ resolution doing exactly what they were built for. It loses all three
 single-session recall categories, which are the ones a flat reader is best at
 and a graph is worst at.
 
-**Two slices landed here. Both moved everything, and the second broke a claim.**
+**Four slices are in this table. Every one moved everything.**
 
-| | slice 17 | 18: gate 2 hub exemption | 18: extraction prompt |
-|---|---|---|---|
-| accuracy | 0.4933 | 0.5467 | **0.6000** |
-| answerable accuracy | 0.4000 | 0.4667 | **0.5167** |
-| selective accuracy | — | 0.7568 | **0.8267** |
-| abstention precision | 0.3023 | 0.3421 | **0.3733** |
-| abstention recall | 0.8667 | 0.8667 | **0.9333** |
-| knowledge-update | 0.6923 | 0.7692 | **0.8846** |
-| tokens/q | **893** | 1,004 | 2,608 |
+| | 17 | 18a gate 2 hub | 18b extraction | 18c gate 1 self |
+|---|---|---|---|---|
+| accuracy | 0.4933 | 0.5467 | 0.6000 | **0.6200** |
+| answerable accuracy | 0.4000 | 0.4667 | 0.5167 | **0.5417** |
+| selective accuracy | — | 0.7568 | **0.8267** | 0.8125 |
+| coverage | — | — | 0.5000 | **0.5333** |
+| abstention precision | 0.3023 | 0.3421 | 0.3733 | **0.4000** |
+| abstention recall | 0.8667 | 0.8667 | **0.9333** | **0.9333** |
+| knowledge-update | 0.6923 | 0.7692 | **0.8846** | **0.8846** |
+| single-session-assistant | — | 0.1500 | 0.3000 | **0.4500** |
+| tokens/q | **893** | 1,004 | 2,608 | 2,743 |
 
-Paired against the pre-slice-18 prompt on the identical 150 instances: **90
-correct against 82**.
+Each was one change, re-scored on its own, so unlike slice 17 these **are**
+separately attributed. 18b bundles its own forced fixes (token budget, collapse
+retry) and is the exception.
 
-**The token claim is dead and must not be repeated.** 893 → **2,608**, because
-the extraction prompt raised facts per instance from 14.0 to **42.7**. HydraMem
-is now *more* expensive per question than vector RAG (2,608 against 2,494) and
-only 2.1x cheaper than full context, not 6.2x. Every sentence anywhere claiming
-6.2x, or claiming a cost advantage over vector RAG, is now false.
+**Coverage bought accuracy and cost reliability.** 18c freed 15 questions from
+gate 1 — `unknown_entity` 33 → 18, its false half **22 → 7** — and converted
+only **+3** of them, because `not_in_graph` absorbed the rest (39 → 46).
+Selective accuracy fell 0.8267 → 0.8125 for exactly that reason. Answering more
+often, slightly less reliably, is the trade and it is not free.
 
-**Selective accuracy is nominally the best of the three arms and that is a tie,
-not a win.** 0.8267 against vector_rag's 0.8235 is 0.32 of a percentage point
-over 75 answered questions — **less than one question**. Report it as
-"comparable to vector RAG, clearly better than full context (0.7419)". Anyone
-writing "the most accurate arm when it answers" is over-reading noise.
+**The token claim is dead and must not be repeated.** 893 → **2,743**, because
+slice 18's extraction prompt raised facts per instance from 14.0 to **42.7**.
+HydraMem is now *more* expensive per question than vector RAG (2,743 against
+2,494) and only 2.0x cheaper than full context, not 6.2x. Every sentence
+anywhere claiming 6.2x, or a cost advantage over vector RAG, is false.
+
+**Selective accuracy is no longer the best of the three arms.** 0.8125 against
+vector_rag's 0.8235. Report it as "clearly better than full context (0.7419),
+behind vector RAG". The earlier build's 0.8267 was a 0.32-point lead over 75
+questions — under one question — and was never a win either.
+
+**The bottleneck is now the answering step, not the gates and not extraction.**
+46 of 70 abstentions are `not_in_graph`: the model holding the facts and
+declining. Gates 1-4 together account for 22.
 
 **`ans acc` is accuracy over the answerable questions only, and it is in this
 table to kill one specific sentence.** The tempting framing for an
@@ -192,18 +207,18 @@ Generated per reason in `docs/eval/oracle-abstentions.csv`:
 
 | reason | fired | of which false | where |
 |---|---|---|---|
-| `not_in_graph` | 39 | **22** | after the model, holding the facts, declined |
-| `unknown_entity` | 33 | **22** | gate 1, before retrieval |
-| `no_fact_in_window` | 2 | 2 | gate 3, before retrieval |
-| `empty_graph` | 1 | 1 | the instance extracted nothing at all |
-| `no_such_relation` | **0** | 0 | gate 2, exempted on the hub — see below |
-| `no_path` | **0** | 0 | gate 4 never fires |
-| `uncited_answer`, `fabricated_citation` | **0** | 0 | gate 5 costs nothing |
+| `not_in_graph` | **46** | **29** | after the model, holding the facts, declined |
+| `unknown_entity` | 18 | 7 | gate 1, before retrieval |
+| `no_fact_in_window` | 2 | 2 | gate 3 |
+| `no_such_relation` | 1 | 1 | gate 2 |
+| `no_path` | 1 | 1 | gate 4 |
+| `fabricated_citation` | 1 | 1 | gate 5 |
+| `empty_graph` | 1 | 1 | the instance extracted nothing |
 
-75 abstentions, 47 false — down from 86 and 60 before slice 18. The baselines
-abstain 57 and 65 times, so the count was never the outlier; the false half is.
-`empty_graph` is down to **1** instance from 8, which is the extraction prompt
-working on the gap that used to present as a gate-1 problem and never was.
+70 abstentions, 42 false. `not_in_graph` is **two thirds of them** and gates 1-4
+together are 22 — the answering step is the bottleneck now, not the cascade.
+Slice 18c cut gate 1's false abstentions 22 → 7 and most of that traffic landed
+here instead.
 
 **Two of the four pre-model gates now fire zero times on this corpus, and that
 has to be said plainly rather than buried.** Gate 4 never fired at all. Gate 2
@@ -220,8 +235,8 @@ where every fact hangs off one hub and 38 predicates are assigned unreliably,
 structural absence is nearly unmeasurable. Do not write a sentence implying four
 gates are load-bearing here.
 
-Cost: **2.1x fewer tokens than full-context and slightly MORE than vector RAG**
-(2,608 against 2,494). This was 6.2x and 2.8x before slice 18's extraction
+Cost: **2.0x fewer tokens than full-context and MORE than vector RAG**
+(2,743 against 2,494). This was 6.2x and 2.8x before slice 18's extraction
 prompt tripled facts per instance, 14.0 → 42.7. The cost advantage over vector
 RAG is gone; the latency advantage is not. Latency moved twice in slice 17 and
 both moves

@@ -126,20 +126,24 @@ up"* is not debuggable and *"the model made up `deadbeef`"* is.
 
 Oracle split, **n = 150 per arm**, generated into `docs/eval/` by
 `scripts/run_eval.py --oracle` and `scripts/cost_table.py --oracle`. Regenerate
-with `make eval`. The tables below are transcribed from that output and carry no
-number that is not in it; `docs/eval/oracle-results.md` is authoritative if the
-two ever disagree.
+with `make eval`. Every figure below is transcribed from that output;
+`docs/eval/oracle-results.md` is authoritative if the two ever disagree.
 
-| arm | accuracy | coverage | selective acc | abstain prec | abstain recall | tokens/q |
-|---|---|---|---|---|---|---|
-| full_context | 0.6200 | 0.6200 | 0.7419 | **0.4211** | 0.8000 | 5,540 |
-| vector_rag | **0.6467** | 0.5667 | 0.8235 | 0.4154 | 0.9000 | **2,494** |
-| **hydramem** | 0.6000 | 0.5000 | **0.8267** | 0.3733 | **0.9333** | 2,608 |
+| arm | accuracy | answerable | coverage | selective acc | abstain prec | abstain recall | tokens/q |
+|---|---|---|---|---|---|---|---|
+| full_context | 0.6200 | 0.5750 | 0.6200 | 0.7419 | **0.4211** | 0.8000 | 5,540 |
+| vector_rag | **0.6467** | **0.5833** | 0.5667 | **0.8235** | 0.4154 | 0.9000 | **2,494** |
+| **hydramem** | 0.6200 | 0.5417 | 0.5333 | 0.8125 | 0.4000 | **0.9333** | 2,743 |
 
-`coverage` is the fraction of questions the arm chose to answer;
-`selective accuracy` is how often it was right when it did. They belong
-together — abstention precision alone is gameable in both directions, and an
-arm that refuses everything scores no coverage rather than perfect anything.
+- **coverage** — the fraction of questions the arm chose to answer.
+- **selective accuracy** — how often it was right when it did answer.
+- **answerable** — accuracy over questions that have a gold answer, whether or
+  not the arm attempted them.
+
+Coverage and selective accuracy belong together. Abstention precision alone is
+gameable in both directions — a published truncation baseline scored 93.3 on an
+abstention subset by answering almost nothing — and an arm that refuses
+everything scores no coverage rather than perfect anything.
 
 ### Per category
 
@@ -148,28 +152,65 @@ arm that refuses everything scores no coverage rather than perfect anything.
 | knowledge-update | **0.8846** | 0.5769 | 0.6538 |
 | temporal-reasoning | **0.6923** | 0.3846 | 0.4615 |
 | multi-session | **0.5000** | 0.5000 | 0.4688 |
+| single-session-assistant | 0.4500 | **1.0000** | 0.9000 |
 | single-session-preference | 0.4000 | 0.4500 | **0.5000** |
 | single-session-user | 0.7308 | 0.8846 | **0.9615** |
-| single-session-assistant | 0.3000 | **1.0000** | 0.9000 |
 
 **HydraMem wins the two categories it was built for, by 23 points each.**
-Knowledge-update and temporal reasoning are the supersession chain and the
-bitemporal window doing exactly their job. It loses the three single-session
-recall categories, which are what a flat reader does best and a graph does
-worst.
+Knowledge-update is the SUPERSEDES chain resolving to the current value;
+temporal reasoning is the bitemporal window. It loses the three single-session
+recall categories — what a flat reader does best and a graph does worst.
+
+### Why each abstention happened
+
+Every abstention carries a machine-readable reason, generated per reason into
+`docs/eval/oracle-abstentions.csv`. `count_false` is the defect: an abstention
+on a question that had an answer.
+
+| reason | fired | of which false | where |
+|---|---|---|---|
+| `not_in_graph` | 46 | 29 | after the model, holding the facts, declined |
+| `unknown_entity` | 18 | 7 | gate 1, before retrieval |
+| `no_fact_in_window` | 2 | 2 | gate 3 |
+| `no_such_relation` | 1 | 1 | gate 2 |
+| `no_path` | 1 | 1 | gate 4 |
+| `fabricated_citation` | 1 | 1 | gate 5 |
+| `empty_graph` | 1 | 1 | the instance extracted nothing |
+
+Two thirds of abstentions are the answering step declining, not the cascade
+firing. That is the current bottleneck and it is stated rather than hidden.
+
+### How it got here
+
+Each row is one change, re-scored on its own, so these are separately
+attributed rather than bundled. **Only the last column is current**; the earlier
+ones are superseded measurements kept for attribution and are not in
+`docs/eval/` any more:
+
+| | slice 17 | gate 2 hub exempt | extraction prompt | gate 1 self-ref |
+|---|---|---|---|---|
+| accuracy | 0.4933 | 0.5467 | 0.6000 | **0.6200** |
+| abstention precision | 0.3023 | 0.3421 | 0.3733 | **0.4000** |
+| abstention recall | 0.8667 | 0.8667 | **0.9333** | **0.9333** |
+| knowledge-update | 0.6923 | 0.7692 | **0.8846** | **0.8846** |
+| single-session-assistant | — | 0.1500 | 0.3000 | **0.4500** |
+| tokens/q | **893** | 1,004 | 2,608 | 2,743 |
 
 ### What is not true
 
-Three things this project measured about itself and will not paper over:
+Four things this project measured about itself and will not paper over:
 
-- **It is not the most accurate arm.** Vector RAG is, 0.6467 against 0.6000.
-- **It has no token advantage over vector RAG** — 2,608 against 2,494, slightly
-  worse. It is 2.1x cheaper than full context, not the 6.2x an earlier build
-  measured; raising extraction yield to fix `single-session-assistant` tripled
-  facts per instance and spent that margin.
-- **Its selective-accuracy lead is a tie, not a win.** 0.8267 against 0.8235 is
-  0.32 of a point over 75 answered questions — less than one question. Read it
-  as *comparable to vector RAG, clearly better than full context*.
+- **It is not the most accurate arm.** Vector RAG is, 0.6467 against 0.6200. It
+  is now tied with full-context.
+- **It has no token advantage over vector RAG** — 2,743 against 2,494, worse.
+  It is 2.0x cheaper than full context, not the 6.2x an earlier build measured;
+  raising extraction yield to fix `single-session-assistant` spent that margin.
+- **It does not win selective accuracy either** — 0.8125 against vector RAG's
+  0.8235. It is clearly ahead of full context (0.7419) and behind vector RAG.
+- **Two of the four pre-model gates barely fire on this corpus.** Gate 4 fired
+  once across 150 questions and gate 2 once. Where every fact hangs off one hub
+  and predicates are assigned unreliably, structural absence is close to
+  unmeasurable.
 
 What it does have: the two thesis categories won outright, the highest
 abstention recall of the three arms, a machine-readable reason for every

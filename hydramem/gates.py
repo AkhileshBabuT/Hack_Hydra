@@ -317,6 +317,27 @@ def entity_gate(question: str, entities: list, aliases: dict = None,
             key = find_text(mention)
             if key is not None:
                 via_text.append(mention)
+        if key is None and mention == SELF_KEY:
+            # The graph *is* this user's log, so "do I ..." cannot be a question
+            # about something it has never heard of. Abstaining `unknown_entity:
+            # person:user` refuses the premise of the whole system.
+            #
+            # It became reachable in slice 18 and it is this project's fifth
+            # instance of one slice's fix becoming another gate's false premise.
+            # The extraction prompt was reframed to stop discarding assistant
+            # turns; the model over-applied it, and instances now exist whose
+            # facts are *entirely* assistant-subject -- 19 facts, 19 of them
+            # assistant, and no `person:user` entity at all. Gate 1 then refused
+            # the user on 8 of the 12 `single-session-assistant` failures while
+            # the instance held 19 facts about that very conversation.
+            #
+            # Dropped rather than resolved. Resolving it would hand gate 4 an
+            # anchor with no Entity behind it, which walks nothing and reports
+            # `no_path` -- trading this false abstention for a different one.
+            # Dropping makes gate 1 pass more, which is the direction `BIAS`
+            # fixes, and the `if not resolved` fallback below still covers a
+            # question that named nothing else.
+            continue
         if key is None:
             return GateResult(False, "unknown_entity", mention)
         target = canonical(key, aliases)

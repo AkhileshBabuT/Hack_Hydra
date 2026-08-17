@@ -10,13 +10,14 @@ query,full_context,p95_latency,65046,ms,n/a (no graph)
 query,full_context,bolt_round_trips_per_question,0.0,round trips,at most four by construction; one batched MSpaths resolves every pair
 query,full_context,questions_costing_0_round_trips,150,count,
 query,hydramem,questions,150,count,
-query,hydramem,prompt_tokens_per_question,2547,tokens,
-query,hydramem,completion_tokens_per_question,61,tokens,
-query,hydramem,tokens_per_question,2608,tokens,
-query,hydramem,median_latency,2672,ms,strong (evaluation)
-query,hydramem,p95_latency,19203,ms,strong (evaluation)
-query,hydramem,bolt_round_trips_per_question,3.0,round trips,at most four by construction; one batched MSpaths resolves every pair
-query,hydramem,questions_costing_3_round_trips,150,count,
+query,hydramem,prompt_tokens_per_question,2674,tokens,
+query,hydramem,completion_tokens_per_question,68,tokens,
+query,hydramem,tokens_per_question,2743,tokens,
+query,hydramem,median_latency,3148,ms,strong (evaluation)
+query,hydramem,p95_latency,6250,ms,strong (evaluation)
+query,hydramem,bolt_round_trips_per_question,3.01,round trips,at most four by construction; one batched MSpaths resolves every pair
+query,hydramem,questions_costing_3_round_trips,149,count,
+query,hydramem,questions_costing_4_round_trips,1,count,
 query,vector_rag,questions,150,count,
 query,vector_rag,prompt_tokens_per_question,2447,tokens,
 query,vector_rag,completion_tokens_per_question,47,tokens,
@@ -33,6 +34,6 @@ ingest,hydramem,extraction_tokens_per_fact,270,tokens,"cache hits counted: the t
 ingest,hydramem,bolt_round_trips_per_fact,0.166,round trips,"batched UNWIND writes, so this falls as an instance grows"
 ingest,hydramem,latency_per_fact,25.6,ms,
 ingest,hydramem,parse_failures,0,count,
-server,hydradb,graph_client_operation_read_duration_seconds,276.605,ms,"mean over 615 samples; exported in seconds, verified from the metric definition and converted here"
-server,hydradb,graph_client_operation_write_duration_seconds,126.161,ms,"mean over 1057 samples; exported in seconds, verified from the metric definition and converted here"
-server,hydradb,graph_query_rows_duration_microseconds,205.877,ms,"mean over 615 samples; exported in microseconds, verified from the metric definition and converted here"
+server,hydradb,graph_client_operation_read_duration_seconds,785.092,ms,"mean over 1015 samples; exported in seconds, verified from the metric definition and converted here"
+server,hydradb,graph_client_operation_write_duration_seconds,0.0,ms,"mean over 0 samples; exported in seconds, verified from the metric definition and converted here"
+server,hydradb,graph_query_rows_duration_microseconds,414.4,ms,"mean over 1015 samples; exported in microseconds, verified from the metric definition and converted here"

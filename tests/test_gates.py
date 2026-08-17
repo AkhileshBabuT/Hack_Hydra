@@ -456,3 +456,46 @@ def test_the_hub_exemption_and_gate_4s_are_the_same_shape():
     # person:user stays a valid gate-4 anchor -- the two exemptions are about
     # different failures and must not be collapsed into one list.
     assert gates.SELF_KEY not in paths.NON_TOPICAL_KEYS
+
+
+# --- gate 1 cannot call the user unknown -----------------------------------
+#
+# Slice 18's extraction reframe made instances whose facts are *entirely*
+# assistant-subject, so no `person:user` entity exists in them. Gate 1 then
+# abstained `unknown_entity: person:user` on 8 of the 12 remaining
+# `single-session-assistant` failures, while the instance held up to 19 facts
+# about that very conversation.
+
+
+def test_gate_1_does_not_call_the_user_an_unknown_entity():
+    """The graph IS this user's log. "Do I..." cannot name something it has
+    never heard of, and refusing it refuses the premise of the system."""
+    only_assistant = [{"key": "person:assistant", "name": "assistant"}]
+    result = gates.entity_gate("Do I have any allergies?", only_assistant)
+    assert result.passed, "the user is never an unknown entity"
+
+
+def test_the_user_is_dropped_not_resolved_when_it_has_no_entity():
+    """Resolving it would hand gate 4 an anchor with no Entity behind it, which
+    walks nothing and reports `no_path` -- one false abstention traded for
+    another. Four gate-4 fixture tests already turn on this distinction."""
+    only_assistant = [{"key": "person:assistant", "name": "assistant"}]
+    result = gates.entity_gate("Do I have any allergies?", only_assistant)
+    assert gates.SELF_KEY not in result.resolved
+
+
+def test_a_genuinely_unknown_mention_still_abstains():
+    """Not vacuous. The gate's whole job is catching a question about something
+    the graph has never heard of, and it still does."""
+    held = [{"key": "person:user", "name": "user"}]
+    result = gates.entity_gate("What did I think of Reykjavik?", held)
+    assert not result.passed
+    assert result.reason == "unknown_entity"
+    assert "reykjavik" in result.detail
+
+
+def test_the_user_still_resolves_normally_when_it_does_have_an_entity():
+    held = [{"key": "person:user", "name": "user"}]
+    result = gates.entity_gate("Do I have any allergies?", held)
+    assert result.passed
+    assert gates.SELF_KEY in result.resolved, "the normal path must be unchanged"
