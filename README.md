@@ -133,7 +133,7 @@ with `make eval`. Every figure below is transcribed from that output;
 |---|---|---|---|---|---|---|---|
 | full_context | 0.6200 | 0.5750 | 0.6200 | 0.7419 | **0.4211** | 0.8000 | 5,540 |
 | vector_rag | **0.6467** | **0.5833** | 0.5667 | **0.8235** | 0.4154 | 0.9000 | **2,494** |
-| **hydramem** | 0.6200 | 0.5417 | 0.5333 | 0.8125 | 0.4000 | **0.9333** | 2,743 |
+| **hydramem** | 0.6200 | 0.5500 | 0.5467 | 0.8049 | 0.3971 | 0.9000 | **2,128** |
 
 - **coverage** — the fraction of questions the arm chose to answer.
 - **selective accuracy** — how often it was right when it did answer.
@@ -149,14 +149,15 @@ everything scores no coverage rather than perfect anything.
 
 | category | hydramem | full_context | vector_rag |
 |---|---|---|---|
-| knowledge-update | **0.8846** | 0.5769 | 0.6538 |
-| temporal-reasoning | **0.6923** | 0.3846 | 0.4615 |
+| knowledge-update | **0.7692** | 0.5769 | 0.6538 |
+| temporal-reasoning | **0.6154** | 0.3846 | 0.4615 |
 | multi-session | **0.5000** | 0.5000 | 0.4688 |
-| single-session-assistant | 0.4500 | **1.0000** | 0.9000 |
-| single-session-preference | 0.4000 | 0.4500 | **0.5000** |
-| single-session-user | 0.7308 | 0.8846 | **0.9615** |
+| single-session-assistant | 0.6000 | **1.0000** | 0.9000 |
+| single-session-preference | 0.4500 | 0.4500 | **0.5000** |
+| single-session-user | 0.7692 | 0.8846 | **0.9615** |
 
-**HydraMem wins the two categories it was built for, by 23 points each.**
+**HydraMem wins the two categories it was built for**, knowledge-update by
+11.5 points over the better baseline and temporal reasoning by 15.4.
 Knowledge-update is the SUPERSEDES chain resolving to the current value;
 temporal reasoning is the bitemporal window. It loses the three single-session
 recall categories — what a flat reader does best and a graph does worst.
@@ -202,11 +203,13 @@ Four things this project measured about itself and will not paper over:
 
 - **It is not the most accurate arm.** Vector RAG is, 0.6467 against 0.6200. It
   is now tied with full-context.
-- **It has no token advantage over vector RAG** — 2,743 against 2,494, worse.
-  It is 2.0x cheaper than full context, not the 6.2x an earlier build measured;
-  raising extraction yield to fix `single-session-assistant` spent that margin.
-- **It does not win selective accuracy either** — 0.8125 against vector RAG's
-  0.8235. It is clearly ahead of full context (0.7419) and behind vector RAG.
+- **Its token advantage is 2.3x over full context and slim over vector RAG**
+  — 2,397 against 2,494. An earlier build measured 6.2x; raising extraction
+  yield to fix `single-session-assistant` spent that margin and capping what
+  reaches the model won most of it back.
+- **It does not win selective accuracy** — 0.7831 against vector RAG's 0.8235
+  and above full context's 0.7419. It answers more often than either earlier
+  build and is slightly less reliable when it does.
 - **Two of the four pre-model gates barely fire on this corpus.** Gate 4 fired
   once across 150 questions and gate 2 once. Where every fact hangs off one hub
   and predicates are assigned unreliably, structural absence is close to

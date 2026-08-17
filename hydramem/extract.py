@@ -151,9 +151,25 @@ SYSTEM = (
     "Return JSON only, matching the schema exactly. No prose, no markdown.\n"
     "Rules:\n"
     "- Only facts stated in the session. Never infer, never generalise.\n"
-    "- Use the subject 'user' for what the user states about themselves, "
-    "'assistant' for what the assistant supplies, and a person, org or place "
-    "when one is explicitly named as the subject.\n"
+    # Slice 18b removed "the user is the subject of most facts" because that
+    # framing was suppressing assistant facts entirely. It over-corrected:
+    # measured across the 150-instance slice, **20 instances ended with no
+    # `person:user` entity at all and 14 had *only* `person:assistant`** -- the
+    # user erased from their own memory graph. "Where does my sister Emily
+    # live?" landed on an instance holding 23 facts, one entity, and not a
+    # single mention of Emily, while both baselines answered it.
+    #
+    # The anchor is restored *without* demoting the assistant: the user is the
+    # default subject for anything the user said, and assistant-supplied content
+    # keeps the first-class rule below. Both halves are now stated, which is
+    # what neither version managed.
+    "- A turn spoken by the user is about the user unless it explicitly names "
+    "someone else as the subject. Use subject 'user' for those. Use "
+    "'assistant' only for content the assistant itself supplied, and a named "
+    "person, org or place when the session makes one the subject.\n"
+    "- Almost every session contains facts about the user. If you have "
+    "extracted nothing with subject 'user', re-read the user's turns before "
+    "returning.\n"
     f"- predicate must be one of: {', '.join(PREDICATES)}\n"
     f"- subject_type must be one of: {', '.join(ENTITY_TYPES)}\n"
     "- value_is_entity is true only when the value names a person, org or place.\n"

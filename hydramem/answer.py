@@ -18,7 +18,7 @@ from collections import defaultdict
 
 from pydantic import BaseModel, Field, ValidationError
 
-from . import chain, client, extract, gates, llm, paths, statements, temporal
+from . import chain, client, extract, gates, ids, llm, paths, statements, temporal
 
 ABSTAIN = "ABSTAIN"
 
@@ -106,6 +106,81 @@ def fact_line(fact: dict, width: int = None) -> str:
         f'{fact["fact_id"]} | {_day(fact["valid_from"])} | {fact["subject_name"]} '
         f'| {fact["predicate"]} | {fact["value_text"]} | "{snippet}"{ended}'
     )
+
+
+# How many facts reach the model. Above this, the least relevant are dropped.
+#
+# `answer_question` has always sent every fact in the instance, narrowed only by
+# a resolved window. That was right at 14.0 facts per instance. Slice 18's
+# extraction prompt took it to 42.7, and the failures moved with the density:
+# a question the model *declines* holds a median of 42 facts against 31 for one
+# it answers, mean 61.2 against 37.9, max 236 against 127. That is the
+# lost-in-the-middle degradation this project documents for the long-context
+# baseline, now happening inside its own prompt.
+#
+# 60 was chosen from a distribution that no longer holds. At the time: p50 = 35,
+# p75 = 55, p90 = 78, max = 236, biting on 21% of instances. **After slice 18e
+# restored the user as the default subject the yield fell 42.7 -> 26.9 facts per
+# instance**, and the live distribution is p50 = 24, p90 = 65, max = 183 -- the
+# cap now fires on **15 of 150 instances (10%)**.
+#
+# Still live, not dead code, and deliberately left at 60 rather than re-tuned.
+# Two reasons. The ablation measured narrowing as worth **zero accuracy** (93
+# correct against 93, paired), so re-deriving the number optimises a lever with
+# no demonstrated effect on the thing it was built for. And the tail it exists
+# to stop is still there -- one instance holds 183 facts.
+#
+# If the extractor's yield moves again, re-derive from the *current*
+# distribution rather than trusting either set of numbers above. Both are dated.
+NARROW_CAP = 60
+
+
+def relevance(question: str, fact: dict) -> int:
+    """Word overlap between the question and a fact. Lexical, like the gates.
+
+    No model and no embedding: a ranker that hallucinates relevance is the same
+    class of failure as a gate that hallucinates absence, and this decides what
+    the model is allowed to see.
+    """
+    words = set(gates._WORDS.findall(question.lower()))
+    text = f'{fact["predicate"]} {fact["value_text"]} {fact.get("snippet", "")}'
+    return len(words & set(gates._WORDS.findall(text.lower())))
+
+
+def narrow(question: str, facts: list, cap: int = NARROW_CAP) -> list:
+    """The `cap` most relevant facts, **in their original order**.
+
+    Two properties matter more than the ranking itself:
+
+    **Order is preserved.** Facts arrive oldest-first and the model reads
+    supersession markers in sequence; re-sorting by relevance would scramble the
+    one signal knowledge-update depends on, and that is the best-scoring
+    category here (0.8846).
+
+    **A supersession group is kept whole.** Dropping the newer half of a chain
+    would show the model a retracted value with nothing replacing it -- strictly
+    worse than showing neither. So a group is kept entirely or not at all, which
+    can push the result slightly over `cap`. That is the correct direction: the
+    cap exists to stop a haystack, not to hit a number.
+
+    Inert below the cap, which is 79% of instances, and asserted as such.
+    """
+    if len(facts) <= cap:
+        return facts
+
+    by_group, scored = defaultdict(list), {}
+    for i, fact in enumerate(facts):
+        key = chain.group_key(ids.entity_id("", fact.get("subject_key", "")), fact)
+        by_group[key].append(i)
+        scored[i] = relevance(question, fact)
+
+    ranked = sorted(by_group, key=lambda k: -max(scored[i] for i in by_group[k]))
+    keep = set()
+    for key in ranked:
+        if len(keep) >= cap:
+            break
+        keep.update(by_group[key])
+    return [f for i, f in enumerate(facts) if i in keep]
 
 
 # Reasons an appeal can act on. Only gate 5's `not_in_graph`, deliberately: it
@@ -391,6 +466,14 @@ def answer_question(driver, instance_id: str, question: str, asked_at: int = Non
         # window is non-empty for the gated entity; `or facts` covers the case
         # where the retrieved set is wider than the entity the gate cleared.
         facts = temporal.in_window(facts, window) or facts
+
+    # Cap what reaches the model. Above ~60 facts the model starts declining on
+    # questions the graph answers -- see `NARROW_CAP`. The appeal below still
+    # gets `retrieved`, so a question narrowed here can still be re-asked wider.
+    shown_all = facts
+    facts = narrow(question, facts)
+    if len(facts) < len(shown_all):
+        trace.append(f"narrow: {len(shown_all)} facts -> {len(facts)}")
 
     asked = "" if asked_at is None else dt.datetime.fromtimestamp(
         asked_at, dt.timezone.utc

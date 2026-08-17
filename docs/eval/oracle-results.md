@@ -27,13 +27,13 @@ The slice is **stratified, not random**: every abstention instance in the split 
 | full_context | single-session-preference | 20 | 0 | 0.45 | 0.45 | 0.7 | 0.6429 | 0.0 |  | 0 | 0 |
 | full_context | single-session-user | 26 | 6 | 0.8846 | 0.85 | 0.6538 | 1.0 | 0.6667 | 1.0 | 0 | 0 |
 | full_context | temporal-reasoning | 26 | 6 | 0.3846 | 0.35 | 0.5769 | 0.4667 | 0.2727 | 0.5 | 0 | 0 |
-| hydramem | ALL | 150 | 30 | 0.62 | 0.5417 | 0.5333 | 0.8125 | 0.4 | 0.9333 | 0 | 0 |
-| hydramem | knowledge-update | 26 | 6 | 0.8846 | 0.85 | 0.7308 | 0.8947 | 0.8571 | 1.0 | 0 | 0 |
-| hydramem | multi-session | 32 | 12 | 0.5 | 0.3 | 0.3438 | 0.5455 | 0.4762 | 0.8333 | 0 | 0 |
-| hydramem | single-session-assistant | 20 | 0 | 0.45 | 0.45 | 0.55 | 0.8182 | 0.0 |  | 0 | 0 |
-| hydramem | single-session-preference | 20 | 0 | 0.4 | 0.4 | 0.55 | 0.7273 | 0.0 |  | 0 | 0 |
-| hydramem | single-session-user | 26 | 6 | 0.7308 | 0.65 | 0.5385 | 0.9286 | 0.5 | 1.0 | 0 | 0 |
-| hydramem | temporal-reasoning | 26 | 6 | 0.6923 | 0.6 | 0.5385 | 0.8571 | 0.5 | 1.0 | 0 | 0 |
+| hydramem | ALL | 150 | 30 | 0.62 | 0.55 | 0.5467 | 0.8049 | 0.3971 | 0.9 | 0 | 0 |
+| hydramem | knowledge-update | 26 | 6 | 0.7692 | 0.75 | 0.6923 | 0.8333 | 0.625 | 0.8333 | 0 | 0 |
+| hydramem | multi-session | 32 | 12 | 0.5 | 0.3 | 0.4062 | 0.4615 | 0.5263 | 0.8333 | 0 | 0 |
+| hydramem | single-session-assistant | 20 | 0 | 0.6 | 0.6 | 0.6 | 1.0 | 0.0 |  | 0 | 0 |
+| hydramem | single-session-preference | 20 | 0 | 0.45 | 0.45 | 0.65 | 0.6923 | 0.0 |  | 0 | 0 |
+| hydramem | single-session-user | 26 | 6 | 0.7692 | 0.7 | 0.5385 | 1.0 | 0.5 | 1.0 | 0 | 0 |
+| hydramem | temporal-reasoning | 26 | 6 | 0.6154 | 0.5 | 0.4615 | 0.8333 | 0.4286 | 1.0 | 0 | 0 |
 | vector_rag | ALL | 150 | 30 | 0.6467 | 0.5833 | 0.5667 | 0.8235 | 0.4154 | 0.9 | 0 | 0 |
 | vector_rag | knowledge-update | 26 | 6 | 0.6538 | 0.6 | 0.5769 | 0.8 | 0.4545 | 0.8333 | 0 | 0 |
 | vector_rag | multi-session | 32 | 12 | 0.4688 | 0.15 | 0.1562 | 0.6 | 0.4444 | 1.0 | 0 | 0 |
@@ -53,14 +53,14 @@ A reason with **count 0** is a measurement, not a gap in the table — the gated
 | arm | reason | count | count_false | n_abstained |
 |---|---|---|---|---|
 | full_context | (no gates) | 57 | 33 | 57 |
-| hydramem | unknown_entity | 18 | 7 | 70 |
-| hydramem | no_such_relation | 1 | 1 | 70 |
-| hydramem | no_fact_in_window | 2 | 2 | 70 |
-| hydramem | no_path | 1 | 1 | 70 |
-| hydramem | not_in_graph | 46 | 29 | 70 |
-| hydramem | uncited_answer | 0 | 0 | 70 |
-| hydramem | fabricated_citation | 1 | 1 | 70 |
-| hydramem | empty_graph | 1 | 1 | 70 |
+| hydramem | unknown_entity | 15 | 4 | 68 |
+| hydramem | no_such_relation | 1 | 1 | 68 |
+| hydramem | no_fact_in_window | 2 | 2 | 68 |
+| hydramem | no_path | 2 | 2 | 68 |
+| hydramem | not_in_graph | 48 | 32 | 68 |
+| hydramem | uncited_answer | 0 | 0 | 68 |
+| hydramem | fabricated_citation | 0 | 0 | 68 |
+| hydramem | empty_graph | 0 | 0 | 68 |
 | vector_rag | (no gates) | 65 | 38 | 65 |
 
 Full per-category breakdown: `oracle-abstentions.csv`.
@@ -80,14 +80,14 @@ Full per-category breakdown: `oracle-abstentions.csv`.
 | query | full_context | bolt_round_trips_per_question | 0.0 | round trips | at most four by construction; one batched MSpaths resolves every pair |
 | query | full_context | questions_costing_0_round_trips | 150 | count |  |
 | query | hydramem | questions | 150 | count |  |
-| query | hydramem | prompt_tokens_per_question | 2674 | tokens |  |
-| query | hydramem | completion_tokens_per_question | 68 | tokens |  |
-| query | hydramem | tokens_per_question | 2743 | tokens |  |
-| query | hydramem | median_latency | 3148 | ms | strong (evaluation) |
-| query | hydramem | p95_latency | 6250 | ms | strong (evaluation) |
-| query | hydramem | bolt_round_trips_per_question | 3.01 | round trips | at most four by construction; one batched MSpaths resolves every pair |
-| query | hydramem | questions_costing_3_round_trips | 149 | count |  |
-| query | hydramem | questions_costing_4_round_trips | 1 | count |  |
+| query | hydramem | prompt_tokens_per_question | 1975 | tokens |  |
+| query | hydramem | completion_tokens_per_question | 153 | tokens |  |
+| query | hydramem | tokens_per_question | 2128 | tokens |  |
+| query | hydramem | median_latency | 1476 | ms | strong (evaluation) |
+| query | hydramem | p95_latency | 24265 | ms | strong (evaluation) |
+| query | hydramem | bolt_round_trips_per_question | 3.03 | round trips | at most four by construction; one batched MSpaths resolves every pair |
+| query | hydramem | questions_costing_3_round_trips | 146 | count |  |
+| query | hydramem | questions_costing_4_round_trips | 4 | count |  |
 | query | vector_rag | questions | 150 | count |  |
 | query | vector_rag | prompt_tokens_per_question | 2447 | tokens |  |
 | query | vector_rag | completion_tokens_per_question | 47 | tokens |  |
@@ -96,17 +96,17 @@ Full per-category breakdown: `oracle-abstentions.csv`.
 | query | vector_rag | p95_latency | 97734 | ms | n/a (no graph) |
 | query | vector_rag | bolt_round_trips_per_question | 0.0 | round trips | at most four by construction; one batched MSpaths resolves every pair |
 | query | vector_rag | questions_costing_0_round_trips | 150 | count |  |
-| ingest | hydramem | instances_ingested | 149 | count |  |
-| ingest | hydramem | sessions_ingested | 255 | count |  |
-| ingest | hydramem | facts_written | 6361 | count |  |
-| ingest | hydramem | facts_per_session | 24.95 | facts |  |
-| ingest | hydramem | extraction_tokens_per_fact | 270 | tokens | cache hits counted: the tokens were spent once, whoever spent them |
-| ingest | hydramem | bolt_round_trips_per_fact | 0.166 | round trips | batched UNWIND writes, so this falls as an instance grows |
-| ingest | hydramem | latency_per_fact | 25.6 | ms |  |
-| ingest | hydramem | parse_failures | 0 | count |  |
-| server | hydradb | graph_client_operation_read_duration_seconds | 785.092 | ms | mean over 1015 samples; exported in seconds, verified from the metric definition and converted here |
-| server | hydradb | graph_client_operation_write_duration_seconds | 0.0 | ms | mean over 0 samples; exported in seconds, verified from the metric definition and converted here |
-| server | hydradb | graph_query_rows_duration_microseconds | 414.4 | ms | mean over 1015 samples; exported in microseconds, verified from the metric definition and converted here |
+| ingest | hydramem | instances_ingested | 150 | count |  |
+| ingest | hydramem | sessions_ingested | 256 | count |  |
+| ingest | hydramem | facts_written | 4753 | count |  |
+| ingest | hydramem | facts_per_session | 18.57 | facts |  |
+| ingest | hydramem | extraction_tokens_per_fact | 330 | tokens | cache hits counted: the tokens were spent once, whoever spent them |
+| ingest | hydramem | bolt_round_trips_per_fact | 0.224 | round trips | batched UNWIND writes, so this falls as an instance grows |
+| ingest | hydramem | latency_per_fact | 34.8 | ms |  |
+| ingest | hydramem | parse_failures | 1 | count |  |
+| server | hydradb | graph_client_operation_read_duration_seconds | 325.605 | ms | mean over 1874 samples; exported in seconds, verified from the metric definition and converted here |
+| server | hydradb | graph_client_operation_write_duration_seconds | 162.465 | ms | mean over 1662 samples; exported in seconds, verified from the metric definition and converted here |
+| server | hydradb | graph_query_rows_duration_microseconds | 217.119 | ms | mean over 1874 samples; exported in microseconds, verified from the metric definition and converted here |
 
 ## What is *not* in this table
 

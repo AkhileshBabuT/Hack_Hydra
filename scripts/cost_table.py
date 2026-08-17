@@ -51,10 +51,32 @@ CONSISTENCY = {"hydramem": "strong (evaluation)", "full_context": "n/a (no graph
 
 
 def load(path: pathlib.Path) -> list:
+    """Scored rows, deduplicated by instance, last-wins.
+
+    The resume log is append-only and a re-run appends a *second* row for every
+    question it re-scores -- `full_context.jsonl` holds 162 lines for 150
+    questions.
+
+    **This dedupe is belt-and-braces, not a bug fix.** `query_cost` has always
+    deduplicated by `(arm, instance_id)` and the published cost figures were
+    never affected. It was added here on 2026-08-17 after a wrong diagnosis:
+    the loader was correctly identified as not deduplicating, and the *impact*
+    was then asserted without checking that the consumer already did. An
+    ad-hoc script averaging the raw 162 rows produced a number the system never
+    produced, and that number was reported as a regression. It was not one.
+
+    Kept because `ingest_cost` consumes this loader too and does not dedupe on
+    its own, and because one rule applied at the boundary is easier to hold than
+    one rule applied at each consumer. Not kept because it fixed anything.
+    """
     if not path.exists():
         return []
-    return [json.loads(line) for line in
-            path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            row = json.loads(line)
+            rows[row.get("instance_id", len(rows))] = row
+    return list(rows.values())
 
 
 def percentile(values: list, fraction: float) -> float:

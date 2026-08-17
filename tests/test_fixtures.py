@@ -216,18 +216,38 @@ ABSTAIN = [
     Case("gate1 does not see another tenant's entity", "main",
          "What does Rosalind Okonkwo do for a living?",
          reason="unknown_entity", detail="rosalind okonkwo", trips=3),
-    Case("gate2 has no predicate of that shape", "main",
-         "What is my email address?",
-         reason="no_such_relation", detail="has no address, email"),
-    Case("gate2 again, on a single predicate", "main",
-         "What language do I speak?",
-         reason="no_such_relation", detail="language"),
+    # These two abstained at gate 2 until slice 18. They still abstain -- the
+    # guarantee is intact -- but the *defence moved to gate 5*, and what changed
+    # is the price: a model call to refuse, where gate 2 refused for free.
+    #
+    # Two separate guards now let them past gate 2. Slice 12's `other` guard
+    # fires first (the trace reads "pass (holds unlabelled `other` facts)"), and
+    # slice 18's hub exemption would have anyway. Both are justified by the same
+    # measurement: gate 2 fired 18 times on the oracle slice, all 18 about
+    # `person:user`, and 16 were false abstentions.
+    #
+    # Kept as gate-5 cases rather than deleted, because "does the system still
+    # refuse a question it cannot answer" is the property worth pinning, and it
+    # is now pinned end to end through a model call.
+    Case("a predicate the user does not hold now falls to gate 5", "main",
+         "What is my email address?", reason="uncited_answer"),
+    Case("same, on a single predicate", "main",
+         "What language do I speak?", reason="uncited_answer"),
     Case("gate3 window predates every employer fact", "main",
          "Where did I work in 2015?",
          reason="no_fact_in_window", detail="2015-01-01"),
     Case("gate3 window predates the move", "main",
          "Where did I live in 2010?",
          reason="no_fact_in_window", detail="2010-01-01"),
+    # Gate 2 is NOT vacuous after slice 18's hub exemption -- it still fires on a
+    # specific entity. `person:rosalind okonkwo` holds one `occupation` fact and
+    # nothing unlabelled, so neither the `other` guard nor the hub exemption
+    # applies and absence really is evidence. This is the only remaining
+    # `no_such_relation` coverage and it is deliberately on a non-hub entity,
+    # which is exactly the distinction slice 18 drew.
+    Case("gate2 still fires on a specific entity", "islands",
+         "Where does Rosalind Okonkwo live?",
+         reason="no_such_relation", detail="has no lives_in"),
     Case("gate4 finds no route between two real entities", "islands",
          "Did Rosalind Okonkwo and Tobias Vantablack ever meet?",
          reason="no_path", detail="no path within 4 hops", trips=4),
@@ -251,9 +271,14 @@ ABSTAIN = [
     # correctly cited wrong answer the citation check could never catch. It is
     # now attributed to `person:assistant`, so the user simply holds no `prefers`
     # fact and gate 2 says so.
-    Case("assistant advice is no longer the user's preference", "main",
-         "What do I prefer when framing a photo?",
-         reason="no_such_relation", detail="has no prefers"),
+    # Issue 19's property, still held, by a different gate. The advice is
+    # attributed to `person:assistant`, so the user holds no `prefers` fact --
+    # but gate 2 no longer says so, and the refusal now happens at the citation
+    # check instead. Defence in depth doing exactly what it is for: the
+    # structural gate that used to catch this was measured wrong far more often
+    # than right, and removing it did not let the failure through.
+    Case("assistant advice is still not the user's preference", "main",
+         "What do I prefer when framing a photo?", reason="uncited_answer"),
 ]
 
 ANSWER = [

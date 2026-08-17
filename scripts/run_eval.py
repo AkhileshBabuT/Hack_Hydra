@@ -214,17 +214,48 @@ def main() -> None:
             driver.close()
 
     summary = ev.summarise(rows)
-    out = ev.to_csv(summary, ev.RESULTS / f"{split}-per-category.csv")
-    print(f"\nwrote {out}")
+
+    # `<split>-per-category.csv` is the THREE-ARM comparison table. A run over
+    # one arm produces a summary of one arm, and writing it here silently
+    # replaces the comparison with a fragment -- the baselines simply vanish.
+    #
+    # Measured 2026-08-17: a resume loop calling `--arms hydramem` a dozen times
+    # left the file holding 7 rows and a single arm, while README.md and
+    # CLAUDE.md went on citing baseline figures that existed in no generated
+    # file at all. The remaining table stayed *plausible*, which is why it
+    # survived several slices unnoticed. Rebuilding it is one `--summarise-only`
+    # away; noticing it was luck.
+    #
+    # So a partial run refuses to write it. That is not an error -- scoring one
+    # arm is the normal way to work here -- it simply may not claim to be the
+    # comparison.
+    covered = {r["arm"] for r in summary}
+    if covered >= set(ev.ARMS):
+        out = ev.to_csv(summary, ev.RESULTS / f"{split}-per-category.csv")
+        print(f"\nwrote {out}")
+    else:
+        missing = ", ".join(sorted(set(ev.ARMS) - covered))
+        print(f"\nNOT writing {split}-per-category.csv -- this run covers "
+              f"{', '.join(sorted(covered)) or 'nothing'} and the comparison "
+              f"also needs {missing}.")
+        print(f"  Rebuild with: run_eval.py --oracle --summarise-only "
+              f"--arms {','.join(sorted(ev.ARMS))}")
     for row in summary:
         print(f"  {row['arm']:<14} {row['category']:<26} n={row['n']:<4}"
               f" acc={row['accuracy']:<8} abs_p={row['abstain_precision']:<8}"
               f" abs_r={row['abstain_recall']:<8} tok/q={row['tokens_per_q']:<7}"
               f" rt/q={row['round_trips_per_q']}")
 
+    # Same guard, same reason. This one bit while *testing* the guard above: a
+    # single-arm `--summarise-only` correctly refused the comparison table and
+    # then clobbered the abstention breakdown on the next line, taking both
+    # baselines' `(no gates)` rows with it. One fix per file is not a fix.
     reasons = ev.abstention_reasons(rows)
-    out = ev.to_csv(reasons, ev.RESULTS / f"{split}-abstentions.csv")
-    print(f"wrote {out}")
+    if covered >= set(ev.ARMS):
+        out = ev.to_csv(reasons, ev.RESULTS / f"{split}-abstentions.csv")
+        print(f"wrote {out}")
+    else:
+        print(f"NOT writing {split}-abstentions.csv either -- same reason.")
     for row in reasons:
         # ALL only: the per-category rows are for the CSV, not for a terminal.
         # A zero still prints -- `no_path: 0` is the finding, not the absence of

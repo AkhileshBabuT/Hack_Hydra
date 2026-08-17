@@ -72,9 +72,14 @@ docs/hydradb-notes.md     rough edges found; upstream issue candidates
 
 ## Where the build is
 
-Slices 01–18 are built. **357 tests, 356 passing** against a live node holding
+Slices 01–18 are built. **375 tests, 374 passing** against a live node holding
 the evaluation slice — the one red is the known-red budget test below, measured
-at 11.6s against its 10.0s budget. Each issue in `.scratch/hydramem/issues/` carries its own acceptance
+at 20.6s against its 10.0s budget.
+
+**Run the FULL suite, not the driver-free subset.** Four consecutive slices of
+gate changes were verified against only the 135 pure tests, and three
+`test_fixtures.py` cases stayed broken for seven ticks because of it. The full
+suite is 104 seconds. That was never the reason to skip it. Each issue in `.scratch/hydramem/issues/` carries its own acceptance
 detail and a Result section; issues **15, 17, 18, 19 and 20 are closed**, and
 **16 is closed except for what needs a human** — clean-clone verification on a
 second machine, filing the four upstream drafts in `docs/upstream-issues.md`, the
@@ -110,7 +115,7 @@ Oracle split, n=150 per arm, generated in `docs/eval/`. Regenerate with
 |---|---|---|---|---|---|---|---|
 | full_context | 0.6200 | 0.5750 | 0.6200 | 0.7419 | **0.4211** | 0.8000 | 5,540 |
 | vector_rag | **0.6467** | **0.5833** | 0.5667 | **0.8235** | 0.4154 | 0.9000 | **2,494** |
-| hydramem | 0.6200 | 0.5417 | 0.5333 | 0.8125 | 0.4000 | **0.9333** | 2,743 |
+| hydramem | 0.6200 | 0.5500 | 0.5467 | 0.8049 | 0.3971 | 0.9000 | **2,128** |
 
 **HydraMem has caught full_context on accuracy** — 0.6200 each. Vector RAG
 leads by 2.67 points, down from 15.3 at slice 17.
@@ -119,16 +124,16 @@ Per category, and this is where the thesis lives or dies:
 
 | category | hydramem | full_context | vector_rag |
 |---|---|---|---|
-| knowledge-update | **0.8846** | 0.5769 | 0.6538 |
-| temporal-reasoning | **0.6923** | 0.3846 | 0.4615 |
+| knowledge-update | **0.7692** | 0.5769 | 0.6538 |
+| temporal-reasoning | **0.6154** | 0.3846 | 0.4615 |
 | multi-session | **0.5000** | 0.5000 | 0.4688 |
-| single-session-assistant | 0.4500 | **1.0000** | 0.9000 |
-| single-session-preference | 0.4000 | 0.4500 | **0.5000** |
-| single-session-user | 0.7308 | 0.8846 | **0.9615** |
+| single-session-assistant | 0.6000 | **1.0000** | 0.9000 |
+| single-session-preference | 0.4500 | 0.4500 | **0.5000** |
+| single-session-user | 0.7692 | 0.8846 | **0.9615** |
 
 **HydraMem wins the two categories the architecture exists for, by wide
-margins** — knowledge-update by 23 points over the better baseline and temporal
-reasoning by 23 over vector RAG. Both are supersession and bitemporal
+margins** — knowledge-update by 11.5 points over the better baseline and temporal
+reasoning by 15.4 over vector RAG. Both are supersession and bitemporal
 resolution doing exactly what they were built for. It loses all three
 single-session recall categories, which are the ones a flat reader is best at
 and a graph is worst at.
@@ -145,7 +150,37 @@ and a graph is worst at.
 | abstention recall | 0.8667 | 0.8667 | **0.9333** | **0.9333** |
 | knowledge-update | 0.6923 | 0.7692 | **0.8846** | **0.8846** |
 | single-session-assistant | — | 0.1500 | 0.3000 | **0.4500** |
-| tokens/q | **893** | 1,004 | 2,608 | 2,743 |
+| tokens/q | 893 | 1,004 | 2,608 | 2,743 |
+
+**Slice 18e restored the user as the default subject, and it is the most
+uncomfortable result in this table.** Slice 18b's reframe over-corrected:
+measured across the slice, **20 of 150 instances ended with no `person:user`
+entity and 14 had *only* `person:assistant`** — the user erased from their own
+memory graph. "Where does my sister Emily live?" landed on an instance holding
+23 facts, one entity and no mention of Emily, while both baselines answered it.
+
+Fixing it moved **93 correct to 93 correct**, paired. What changed is the
+profile:
+
+| category | before | after |
+|---|---|---|
+| single-session-assistant | 0.4500 | **0.6000** |
+| single-session-user | 0.7308 | **0.7692** |
+| single-session-preference | 0.4000 | **0.4500** |
+| knowledge-update | **0.8846** | 0.7692 |
+| temporal-reasoning | **0.6923** | 0.6154 |
+| tokens/q | 2,397 | **2,128** |
+
+**It traded the two thesis categories for the three recall categories** — gains
+where we still lose, losses where we win. On presentation alone it is a worse
+table, and it is kept anyway: **the old 0.8846 was measured on a store with the
+user erased from 14 instances.** Those 23-point margins were partly an artifact
+of a defect. +11.5 and +15.4 are the honest ones. Do not revert this to recover
+a better-looking number; that restores a known bug.
+
+**Slice 18d capped what reaches the model at 60 facts and changed no accuracy at all** — 93 correct against 93, paired. It is a *cost* and *calibration* result: tokens 2,743 → **2,397** (back under vector RAG), abstention precision 0.4000 → **0.4179**, `not_in_graph` 46 → 43. The three questions it freed became **wrong answers rather than right ones**, so selective accuracy fell 0.8125 → 0.7831.
+
+That is a negative result on the accuracy thesis and it is worth more than the cost win: density *was* making the model decline — a declined question holds a median of 42 facts against 31 for an answered one — but removing the density does not make the answer appear. When the model declines on a dense instance, the answer is usually genuinely absent. Do not spend another cycle on retrieval volume expecting accuracy.
 
 Each was one change, re-scored on its own, so unlike slice 17 these **are**
 separately attributed. 18b bundles its own forced fixes (token budget, collapse
@@ -176,7 +211,7 @@ declining. Gates 1-4 together account for 22.
 table to kill one specific sentence.** The tempting framing for an
 abstention-first system that loses on accuracy is *"it answers less often, but
 it is more reliable when it does."* **That is false here.** HydraMem is the
-least accurate arm on the subset it chose to answer — 0.4667 against 0.5750 and
+least accurate arm on the subset it chose to answer — 0.5500 against 0.5750 and
 0.5833 — so it is not trading coverage for reliability, it is behind on both.
 Slice 18 narrowed it and did not close it.
 The column was generated all along and simply never read. Do not write that
@@ -235,8 +270,8 @@ where every fact hangs off one hub and 38 predicates are assigned unreliably,
 structural absence is nearly unmeasurable. Do not write a sentence implying four
 gates are load-bearing here.
 
-Cost: **2.0x fewer tokens than full-context and MORE than vector RAG**
-(2,743 against 2,494). This was 6.2x and 2.8x before slice 18's extraction
+Cost: **2.3x fewer tokens than full-context and, again, fewer than vector
+RAG** (2,397 against 2,494) — slice 18d's narrowing won the margin back. This was 6.2x and 2.8x before slice 18's extraction
 prompt tripled facts per instance, 14.0 → 42.7. The cost advantage over vector
 RAG is gone; the latency advantage is not. Latency moved twice in slice 17 and
 both moves

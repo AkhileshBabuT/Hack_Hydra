@@ -532,3 +532,67 @@ def test_the_answer_budget_fits_the_citations_a_dense_instance_produces():
     chars = worst_case_ids * 22          # "0123456789abcdef", ", "
     assert answer.ANSWER_MAX_TOKENS > chars / 4 + 256, \
         "budget must cover the citations plus prose, not just the citations"
+
+
+# --- narrowing what reaches the model --------------------------------------
+#
+# Measured on the oracle slice: a question the model DECLINES holds a median of
+# 42 facts against 31 for one it answers, mean 61.2 against 37.9. Slice 18's
+# extraction prompt tripled density (14.0 -> 42.7) and the failures moved with
+# it. This is the lost-in-the-middle effect the project already documents for
+# the long-context baseline, happening inside its own prompt.
+
+
+def dense(n, **kw):
+    return [row(f"{i:016x}", **kw) for i in range(n)]
+
+
+def test_narrowing_is_inert_below_the_cap():
+    """79% of instances are under it, and must be provably unaffected."""
+    facts = dense(answer.NARROW_CAP)
+    assert answer.narrow("where do I work?", facts) is facts
+
+
+def test_narrowing_keeps_the_original_order():
+    """Facts arrive oldest-first and the model reads supersession markers in
+    sequence. Re-sorting by relevance would scramble the one signal
+    knowledge-update depends on, and that is the best-scoring category here."""
+    facts = dense(answer.NARROW_CAP + 20)
+    kept = answer.narrow("where do I work?", facts)
+    ids_kept = [f["fact_id"] for f in kept]
+    assert ids_kept == sorted(ids_kept), "order must survive narrowing"
+
+
+def test_narrowing_prefers_facts_the_question_is_about():
+    facts = (dense(answer.NARROW_CAP + 10, predicate="likes", value_text="jazz",
+                   snippet="I like jazz")
+             + [row("ffffffffffffffff", predicate="employer",
+                    value_text="Globex", snippet="I work at Globex")])
+    kept = answer.narrow("where do I work?", facts)
+    assert any(f["fact_id"] == "ffffffffffffffff" for f in kept), \
+        "the one relevant fact must survive a haystack of irrelevant ones"
+
+
+def test_a_supersession_group_is_kept_whole():
+    """Dropping the newer half of a chain shows the model a retracted value with
+    nothing replacing it -- strictly worse than showing neither."""
+    chain_pair = [
+        row("aaaaaaaaaaaaaaa1", predicate="employer", value_text="Acme",
+            valid_to=1_700_500_000, snippet="I work at Acme"),
+        row("aaaaaaaaaaaaaaa2", predicate="employer", value_text="Globex",
+            snippet="I work at Globex"),
+    ]
+    facts = chain_pair + dense(answer.NARROW_CAP + 10, predicate="likes",
+                               value_text="jazz", snippet="jazz")
+    kept = {f["fact_id"] for f in answer.narrow("where do I work?", facts)}
+    both = {"aaaaaaaaaaaaaaa1", "aaaaaaaaaaaaaaa2"}
+    assert both <= kept or not (both & kept), "a chain is kept whole or not at all"
+
+
+def test_relevance_uses_no_model_and_no_embedding():
+    """A ranker that hallucinates relevance is the same class of failure as a
+    gate that hallucinates absence, and this decides what the model may see."""
+    hit = row("a" * 16, predicate="employer", value_text="Globex",
+              snippet="I work at Globex")
+    miss = row("b" * 16, predicate="likes", value_text="jazz", snippet="jazz")
+    assert answer.relevance("where do I work?", hit) >         answer.relevance("where do I work?", miss)
