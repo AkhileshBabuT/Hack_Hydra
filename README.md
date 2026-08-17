@@ -186,16 +186,19 @@ firing. That is the current bottleneck and it is stated rather than hidden.
 Each row is one change, re-scored on its own, so these are separately
 attributed rather than bundled. **Only the last column is current**; the earlier
 ones are superseded measurements kept for attribution and are not in
-`docs/eval/` any more:
+`docs/eval/` any more. Note that the last step **traded** rather than gained:
+knowledge-update and temporal fell while the assistant category rose, and it was
+kept because the earlier, higher figures were measured on a build that had
+erased the user from 14 of 150 instances:
 
-| | slice 17 | gate 2 hub exempt | extraction prompt | gate 1 self-ref |
-|---|---|---|---|---|
-| accuracy | 0.4933 | 0.5467 | 0.6000 | **0.6200** |
-| abstention precision | 0.3023 | 0.3421 | 0.3733 | **0.4000** |
-| abstention recall | 0.8667 | 0.8667 | **0.9333** | **0.9333** |
-| knowledge-update | 0.6923 | 0.7692 | **0.8846** | **0.8846** |
-| single-session-assistant | — | 0.1500 | 0.3000 | **0.4500** |
-| tokens/q | **893** | 1,004 | 2,608 | 2,743 |
+| | slice 17 | gate 2 hub | extraction prompt | gate 1 self-ref | subject anchor |
+|---|---|---|---|---|---|
+| accuracy | 0.4933 | 0.5467 | 0.6000 | 0.6200 | **0.6200** |
+| abstention precision | 0.3023 | 0.3421 | 0.3733 | **0.4000** | 0.3971 |
+| abstention recall | 0.8667 | 0.8667 | **0.9333** | **0.9333** | 0.9000 |
+| knowledge-update | 0.6923 | 0.7692 | **0.8846** | **0.8846** | 0.7692 |
+| single-session-assistant | — | 0.1500 | 0.3000 | 0.4500 | **0.6000** |
+| tokens/q | **893** | 1,004 | 2,608 | 2,743 | 2,128 |
 
 ### What is not true
 
