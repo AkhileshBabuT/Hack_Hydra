@@ -156,12 +156,13 @@ def test_other_is_never_a_wanted_predicate():
 # --- gate 2: no_such_relation ---------------------------------------------
 
 def test_an_entity_with_no_fact_of_that_shape_abstains_naming_both():
+    """A *specific* entity. The hub is exempt -- see the hub-key tests below."""
     result = gates.predicate_gate(
-        "Where do I work?", [fact("likes"), fact("pet")], gates.SELF_KEY
+        "Where do I work?", [fact("likes"), fact("pet")], "org:acme"
     )
     assert not result.passed
     assert result.reason == "no_such_relation"
-    assert result.detail.startswith("no_such_relation: person:user has no ")
+    assert result.detail.startswith("no_such_relation: org:acme has no ")
     assert "employer" in result.detail
 
 
@@ -200,17 +201,147 @@ def test_other_is_a_sink_that_silently_disables_gate_2():
       - `other` is non-functional and the two values differ, so the chain never
         forms: 22 facts, 0 SUPERSEDES edges, on a knowledge-update instance.
 
-    Both halves are pinned here as the real payload, not a paraphrase. The gate
-    is behaving as specified -- it is the 24.4% `other` share that is not
-    benign, and CLAUDE.md's "confirmed adequate" reading of it was wrong. Owned
-    by issue 17, which costs a node wipe and so is not slice 08's to close.
+    **Half of this is closed by slice 12 and half is not**, which is why the
+    original payload is kept rather than rewritten.
+
+    The *gate* half is fixed: gate 2 no longer abstains here, because the entity
+    holds unlabelled `other` facts and absence cannot be asserted over them. The
+    question now reaches the model, which can read "three bikes" and "four
+    bikes" for itself.
+
+    The *chain* half is untouched and still wrong: `other` is non-functional and
+    the two values differ, so a knowledge-update instance still forms **0**
+    SUPERSEDES edges out of 22 facts. That needs the extractor to stop filing
+    countable possessions under `other`, which costs a node wipe. Still issue 17.
     """
     facts = [fact("other", "three bikes"), fact("other", "four bikes"),
              fact("goal", "century ride")]
     result = gates.predicate_gate("How many bikes do I currently own?", facts,
                                   gates.SELF_KEY)
+    assert result.passed, "slice 12: unlabelled facts block the absence claim"
+    assert result.via_other
+    # The chain half of the defect is unchanged, and this is what still hurts.
+    assert "owns" not in {f["predicate"] for f in facts}
+
+
+
+def test_a_quoted_event_title_is_read_as_an_entity_and_loses_the_question():
+    """Measured live on instance `gpt4_2487a7cb` while probing slice 10.
+
+    The instance holds `visited | workshop on "Effective Time Management"` and
+    the question names the workshop by its title. `mentions` sees a capitalised
+    run, gate 1 looks for an entity called `effective time management`, finds
+    none, and abstains -- so a question the graph demonstrably answers costs 2
+    round trips and returns nothing.
+
+    This is the same shape as the calendar-word bug slice 08 fixed and the glue
+    -word bug slice 07 fixed: the lexical layer over-firing on a capitalised
+    phrase that is not a name. It is *not* the same fix. Dropping calendar words
+    is a closed list; a quoted title is open, and the title is often exactly the
+    thing the question is about. Owned by issue 18.
+
+    Pinned as the live payload, so the day gate 1 learns to read a quoted span
+    as a value rather than a name, this test fails and says so.
+    """
+    question = ("Which event did I attend first, the 'Effective Time Management' "
+                "workshop or the 'Data Analysis using Python' webinar?")
+    assert "effective time management" in gates.mentions(question)
+
+    result = gates.entity_gate(question, [USER])
     assert not result.passed
-    assert result.detail == "no_such_relation: person:user has no owns"
+    assert result.detail == "unknown_entity: effective time management"
+
+
+def test_the_quoted_title_resolves_once_gate_1_can_read_stored_text():
+    """Issue 18, closed by slice 12. The graph held the title all along.
+
+    `visited | workshop on "Effective Time Management"` is on the instance as a
+    fact *value*, and gate 1 could not see it because ingest creates an `Entity`
+    only for a subject and for an object with `value_is_entity` set. The fix is
+    not a list of exceptions -- a quoted title is an open set -- it is that the
+    gate resolves against what the instance stores as text before rejecting a
+    name.
+    """
+    question = ("Which event did I attend first, the 'Effective Time Management' "
+                "workshop or the 'Data Analysis using Python' webinar?")
+    stored = [{"predicate": "visited", "subject_key": gates.SELF_KEY,
+               "value_text": 'workshop on "Effective Time Management"',
+               "snippet": 'I went to the "Data Analysis using Python" webinar'}]
+
+    result = gates.entity_gate(question, [USER],
+                               find_text=gates.text_reader(lambda: stored))
+    assert result.passed
+    assert result.resolved == (gates.SELF_KEY,)
+    # Every one of them resolved by the weaker route, and the trace says so.
+    # Note the second title arrives as two mentions, not one: `_PROPER_RUN`
+    # breaks a capitalised run at the lowercase "using". That is why the fix
+    # cannot be "recognise quoted spans" -- the recogniser never sees the quotes
+    # as a unit, and matching fragments against stored text does not care.
+    assert set(result.via_text) == {"effective time management",
+                                    "data analysis", "python"}
+
+
+# --- gate 1 against stored text (slice 12) --------------------------------
+#
+# Payloads are the live ones from the slice-12 run, where 7 of the first 13
+# HydraMem abstentions were gate 1 rejecting a name the graph did hold.
+
+@pytest.mark.parametrize("mention, stored", [
+    # `uses | Fitbit Charge 3` -- a literal value, so no Entity node exists.
+    ("How long have I been using my Fitbit Charge 3?",
+     {"value_text": "Fitbit Charge 3", "snippet": ""}),
+    # `goal | reach the Gold level on the Starbucks Rewards app` -- the name is
+    # buried inside a longer value, which is the common shape.
+    ("How many stars do I need for gold on my Starbucks Rewards app?",
+     {"value_text": "reach the Gold level on the Starbucks Rewards app",
+      "snippet": ""}),
+    # Held only in the evidence span. Gate 1 asks whether the graph has heard of
+    # this at all, not whether the extractor slotted it well.
+    ("Any tips for getting around Tokyo?",
+     {"value_text": "sightseeing", "snippet": "I am flying to Tokyo in March"}),
+])
+def test_a_name_the_graph_holds_as_text_resolves(mention, stored):
+    stored = [{"predicate": "uses", "subject_key": gates.SELF_KEY, **stored}]
+    result = gates.entity_gate(mention, [USER],
+                               find_text=gates.text_reader(lambda: stored))
+    assert result.passed, result.detail
+    assert result.resolved == (gates.SELF_KEY,)
+
+
+def test_a_name_the_graph_has_never_seen_still_abstains():
+    """Verified live: `air fryer` and `miami` hit nothing at all on their own
+    instances. Those abstentions are honest and the loss is upstream in
+    extraction -- the gate must not swallow them to look better."""
+    stored = [{"predicate": "owns", "subject_key": gates.SELF_KEY,
+               "value_text": "Instant Pot", "snippet": "I bought an Instant Pot"}]
+    result = gates.entity_gate("What did I buy before the Air Fryer?", [USER],
+                               find_text=gates.text_reader(lambda: stored))
+    assert not result.passed
+    assert result.detail == "unknown_entity: air fryer"
+
+
+def test_a_capitalised_chat_opener_is_not_a_name():
+    """`"Any tips?"` abstained `unknown_entity: any` on live data. The corpus is
+    chat, so a question opens with a request or a filler far more often than
+    with a name, and each one of those was a false abstention."""
+    for question in ("Any tips for my phone battery?",
+                     "Please remind me what I ordered.",
+                     "Recently I changed jobs, where do I work now?"):
+        assert gates.mentions(question) == [gates.SELF_KEY] or not [
+            m for m in gates.mentions(question) if m != gates.SELF_KEY
+        ], question
+
+
+def test_resolving_by_text_is_lazy(monkeypatch):
+    """A question whose names all resolve as entities must not trigger the fact
+    read. That laziness is the whole reason the fix costs nothing on the path
+    that matters."""
+    def explode():
+        raise AssertionError("the fact read was issued for a resolvable name")
+
+    result = gates.entity_gate("Did Maya Chen call?", [USER, MAYA],
+                               find_text=gates.text_reader(explode))
+    assert result.passed and result.via_text == ()
 
 
 # --- the cascade ----------------------------------------------------------
@@ -246,3 +377,82 @@ def test_a_glue_word_in_a_predicate_name_does_not_match():
     assert wanted == {"allergic_to"}
 
     assert "lives_in" not in gates.question_predicates("What did I put in the box?")
+
+
+# --- gate 2 and the `other` sink (slice 12) --------------------------------
+
+def test_gate_2_cannot_assert_absence_while_holding_unlabelled_facts():
+    """Measured: gate 2 fired 30 times on the slice-12 run and only 2 were right.
+
+    `other` is the extractor's "captured, could not label", and it is 30.3% of
+    every fact in the corpus. Abstaining `no_such_relation` about an entity that
+    holds `other` facts mistakes this gate's own vocabulary gap for the graph's
+    silence. Of the 16 such firings, 15 were false abstentions.
+    """
+    facts = [fact("other", "reached the Gold level on the Starbucks Rewards app")]
+    result = gates.predicate_gate("What is my email address?", facts,
+                                  gates.SELF_KEY)
+    assert result.passed
+    assert result.via_other, "the weaker pass must be distinguishable"
+
+
+def test_gate_2_still_fires_when_nothing_is_unlabelled():
+    """The guard must not make the gate vacuous. On the same run it still fired
+    on the 14 questions whose entity held no `other` fact at all."""
+    facts = [fact("likes", "jazz"), fact("pet", "Rufus")]
+    result = gates.predicate_gate("What is my email address?", facts,
+                                  "org:acme")
+    assert not result.passed
+    assert result.reason == "no_such_relation"
+    assert not result.via_other
+
+
+def test_a_held_predicate_still_passes_the_strong_way():
+    """An entity that actually holds the predicate must not be reported as the
+    weak `other` pass -- the trace would then misdescribe why it got through."""
+    facts = [fact("employer", "Globex"), fact("other", "something")]
+    result = gates.predicate_gate("Where do I work?", facts, gates.SELF_KEY)
+    assert result.passed and not result.via_other
+
+
+# --- gate 2 cannot assert absence about the hub ----------------------------
+#
+# Measured on the oracle slice: gate 2 fired 18 times, **all 18 about
+# `person:user`**, and 16 were false abstentions. The two survivors are
+# accidents, not signal -- one abstained off a missing `quantity` label, and the
+# other ("what did I bake for my uncle's birthday party") wanted a cake while
+# the cue table matched `birthday`. Precision for the right reason is 0 of 18.
+
+
+def test_gate_2_does_not_assert_absence_about_the_hub():
+    """`person:user` holds the whole life across 38 unreliable labels.
+
+    A missing label there is the extractor's vocabulary gap, not the graph's
+    silence -- the same argument the `other` guard already makes, extended from
+    one predicate to one entity because the corpus says it holds.
+    """
+    facts = [fact("likes", "jazz"), fact("pet", "Rufus")]
+    result = gates.predicate_gate("Where do I work?", facts, gates.SELF_KEY)
+    assert result.passed
+    assert result.via_other, "a weak pass has to be distinguishable in the trace"
+
+
+def test_gate_2_still_fires_on_a_specific_entity():
+    """Not vacuous. On an entity that holds two facts, absence is still
+    evidence -- it is the hub, and only the hub, that it can say nothing about.
+    """
+    facts = [fact("likes", "jazz"), fact("pet", "Rufus")]
+    result = gates.predicate_gate("Where do I work?", facts, "org:acme")
+    assert not result.passed
+    assert result.reason == "no_such_relation"
+
+
+def test_the_hub_exemption_and_gate_4s_are_the_same_shape():
+    """Both are hub keys that make a gate structurally wrong rather than blunt,
+    and both were found by reading which entity the false abstentions named."""
+    from hydramem import paths
+    assert gates.SELF_KEY in gates.HUB_KEYS
+    assert "person:assistant" in paths.NON_TOPICAL_KEYS
+    # person:user stays a valid gate-4 anchor -- the two exemptions are about
+    # different failures and must not be collapsed into one list.
+    assert gates.SELF_KEY not in paths.NON_TOPICAL_KEYS

@@ -160,3 +160,109 @@ a clean clone.
 
 `RUST_MIN_STACK=33554432` is genuinely required — without it the node serves
 `/readyz` and then aborts on the first query.
+
+## A stale writer lease deadlocks every write, permanently (slice 17)
+
+The most severe rough edge found, and the only one that stops the project dead.
+
+**Symptom.** After `docker compose up -d` recreated the container, the suite went
+from 312 passing to 23 failed / 6 errors / 283 passed with no source change.
+Every failure was a write — all eleven mutating statements in the inventory
+(`upsert_*`, `link_*`, `close_fact`) failed and every read passed. Over Bolt the
+client is told only:
+
+```
+Neo.DatabaseError.General.UnknownError: internal query execution error
+```
+
+which reads as a query defect and is not one. The real cause appears **only** in
+`docker logs`:
+
+```
+object store error: Operation `put_opts` with mode `PutMode::Update`
+not yet implemented by LocalFileSystem(file:///data/store)
+```
+
+**Cause.** Not the data, not the image, not our Cypher — the writer lease.
+In `src/engine/writer_lease.rs` @ `6a2fbb1`:
+
+- acquiring uses `PutMode::Update(version)` when a lease object already exists,
+  `PutMode::Create` when it does not (`:266-269`);
+- `LocalFileSystem` implements no conditional update, so that returns
+  `NotImplemented`;
+- there is a fallback that overwrites unconditionally, guarded `if same_holder`
+  (`:270-276`), commented *"stale takeovers remain fail-closed because they
+  require real compare-and-swap"*;
+- `process_holder_id()` is `Ulid::new()` **per process** (`:760-764`).
+
+A restarted node therefore can never be `same_holder` with the lease its
+predecessor left behind, the fallback cannot apply, and the takeover needs a
+compare-and-swap the backend does not have. Fail-closed, permanently.
+
+A clean shutdown releases the lease — the release path deletes the object when it
+sees `NotImplemented` (`:687-695`) — so this bites only after an ungraceful stop:
+a `down` that reaches SIGKILL, a crash, a host reboot, a container recreate.
+
+**Verified both ways**, same image (`sha256:db78309a`, created 2026-08-12):
+
+| store | create | update | repeat |
+|---|---|---|---|
+| existing store, stale lease present | FAIL | FAIL | FAIL |
+| fresh volume, no lease | ok | ok | ok |
+
+A brand-new node id fails on the real store and an update of an existing node
+succeeds on the fresh one, which rules out both store size and the image.
+
+**Fix — one file, not the store:**
+
+```
+hydradb-data/store/graph/data/namespaces/default/graphs/default/_writer_leases/v2/cell-0
+```
+
+Stop the node first. It is a lock and holds no data.
+
+**Upstream issue candidate — the most severe of the four.** The documented
+single-node quickstart configuration (`CLOUD_PROVIDER=local`) becomes permanently
+read-only after one unclean stop, and nothing the client can see says so. The
+fail-closed guard is correct for correctness; the defects are that
+`LocalFileSystem` offers no recovery path at all, and that the error surfaced
+over Bolt names neither the lease nor the object store.
+
+## The MSpaths selector is the only scopable part of the query (slice 17)
+
+`CALL algo.MSpaths({...}) YIELD path RETURN path` **is** the whole query — the
+native path parser ends with `parser.end()`, so no `WHERE` and no `LIMIT` may
+follow. There is therefore nowhere to put a tenant filter, and the selector's
+property match is the only lever.
+
+On the obvious property (`Entity.key`) every tenant's `person:user` is a source,
+so a nominally two-anchor traversal is pairwise over one node **per tenant in the
+store**. Two distinct failures followed, both measured here:
+
+- **Timeout.** At ~53 ingested tenants, under `hydradb.consistency = strong`, the
+  call exceeded the 30s query timeout and killed a 150-question evaluation arm
+  mid-run. The client sees `Neo.ClientError.Transaction.Terminated`.
+- **Silent wrong answers.** At ~160 tenants the call still *returned*, but
+  `resultLimit: 64` filled with other tenants' paths and the caller's own path
+  was crowded out. Filtering results client-side then yields an empty list, which
+  reads as `no_path` — a structural claim, from a query that simply ran out of
+  budget. Two fixture tests that had passed for weeks began failing with no code
+  change.
+
+The second is the dangerous one: no error, no warning, and the failure mode is an
+*abstention*, which looks like the system working correctly.
+
+Fixed by adding an instance-scoped selector property, `skey = "<instance_id>|<key>"`,
+and matching `sourceProperty: 'skey'`. The traversal now starts and stays inside
+one tenant.
+
+Two costs worth recording:
+
+- Adding the property to `UPSERT_ENTITY` broke **every existing caller
+  immediately** — `UNWIND row 0 is missing field skey`, at parse time. Loud and
+  early, which is the good case.
+- It needed a **node wipe**. `UPSERT_ENTITY` is a guarded merge on `last_seen`,
+  and the guard is strictly less-than, so re-ingesting unchanged data has an
+  *equal* guard value and writes nothing — the new property would never reach
+  existing nodes. A guarded upsert makes schema addition a migration, not a
+  backfill.

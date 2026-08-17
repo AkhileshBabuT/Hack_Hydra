@@ -5,7 +5,7 @@ write's storage sequence is visible before pinning the snapshot, so an agent
 that writes a memory and immediately searches for it is guaranteed to see it.
 """
 
-from hydramem import client, ids, statements
+from hydramem import client, ids, ingest, statements
 
 
 def _write_fact(driver, instance_id, subject="person:maya", value="Acme"):
@@ -17,7 +17,12 @@ def _write_fact(driver, instance_id, subject="person:maya", value="Acme"):
     _, bm = client.write(
         driver,
         statements.UPSERT_ENTITY,
-        {"rows": [{"vid": eid, "key": subject, "name": "Maya",
+        {"rows": [{"vid": eid, "key": subject,
+                   # Every field the statement names must be present or HydraDB
+                   # rejects the batch at parse time -- which is how slice 17's
+                   # `skey` broke these four the moment it was added.
+                   "skey": ingest.scoped_key(instance_id, subject),
+                   "name": "Maya",
                    "type": "person", "first_seen": 0, "last_seen": 0,
                    "instance_id": instance_id}]},
         idempotency_key=f"{key}.e",
@@ -29,6 +34,7 @@ def _write_fact(driver, instance_id, subject="person:maya", value="Acme"):
                    "value_text": value, "value_type": "literal",
                    "valid_from": 1700000000, "valid_to": 0,
                    "asserted_at": 1700000000, "session_id": "s1", "turn_idx": 0,
+                   "role": "user",
                    "snippet": f"I work at {value}", "confidence": 0.9,
                    "status": "current", "valid_from_hint": "",
                    "instance_id": instance_id}]},

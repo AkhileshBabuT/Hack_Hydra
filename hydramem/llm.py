@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import pathlib
+import threading
 import time
 
 import tiktoken
@@ -60,6 +61,37 @@ _ENC = tiktoken.get_encoding("cl100k_base")
 
 # 429 rate limit, 408/409 transport races, 404 transient routing (measured).
 RETRYABLE_4XX = frozenset([404, 408, 409, 429])
+
+
+# Tokens this process has spent, counted where the provider reports them rather
+# than re-counted with a stand-in encoder. Same shape and same reason as
+# `client.round_trips()`: "tokens per question" is a claim in the cost table, and
+# a claim tallied by whoever thinks they know how much they asked for is not a
+# measurement.
+#
+# A cache hit still counts. The tokens were real when they were spent, and a
+# per-question cost that falls to zero on a rerun would describe the cache
+# rather than the system.
+#
+# ponytail: a module-level dict, for the reason the round-trip counter is a
+# module-level int -- one process, one harness, take a difference around the
+# call you care about.
+_usage = {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0}
+# `d[k] += n` is load-add-store, so it drops counts under the thread pool the
+# eval harness uses to pre-warm the extraction cache. A cost table that is
+# quietly short is worse than no cost table.
+_usage_lock = threading.Lock()
+
+
+def usage() -> dict:
+    return dict(_usage)
+
+
+def _record(result: dict) -> None:
+    with _usage_lock:
+        _usage["prompt_tokens"] += result["usage"].get("prompt_tokens", 0)
+        _usage["completion_tokens"] += result["usage"].get("completion_tokens", 0)
+        _usage["calls"] += 1
 
 
 class ContextOverflow(RuntimeError):
@@ -128,7 +160,13 @@ def complete(
     max_tokens: int = 2048,
     temperature: float = 0.0,
     response_format: dict = None,
-    retries: int = 5,
+    # Eight, not five. The backoff doubles from 1s, so five attempts give up
+    # after ~15s while the failure this exists to survive -- NIM returning 404
+    # for a model id that is valid -- recovers on the order of minutes. Measured
+    # in slice 12: a 150-question arm died mid-run on exactly that, and the model
+    # answered a probe seconds later. Eight attempts spans ~2 minutes, which
+    # matches the documented recovery, and costs nothing when nothing is wrong.
+    retries: int = 8,
 ) -> dict:
     """One chat completion, cached by content hash.
 
@@ -151,6 +189,7 @@ def complete(
     )
     hit = cache_get(key)
     if hit is not None:
+        _record(hit)
         return {**hit, "cached": True}
 
     ceiling = measured_ceiling()
@@ -182,6 +221,7 @@ def complete(
                 "model": model,
             }
             cache_put(key, result)
+            _record(result)
             return {**result, "cached": False}
         except Exception as exc:  # noqa: BLE001 - provider SDKs raise varied types
             last = exc

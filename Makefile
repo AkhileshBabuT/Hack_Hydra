@@ -1,6 +1,6 @@
 PY := ./.venv/Scripts/python.exe
 
-.PHONY: setup up down logs verify-cypher test measure-extraction clean
+.PHONY: setup up down logs verify-cypher test fixtures measure-extraction eval clean
 
 setup:
 	python -m venv .venv
@@ -31,10 +31,24 @@ verify-cypher:
 test:
 	$(PY) -m pytest -q
 
+# Slice 11: the development loop. 25 cases against the live node, model
+# stubbed, under ten seconds. Run this on every change; run `test` before
+# a commit.
+fixtures:
+	$(PY) -m pytest tests/test_fixtures.py -q
+
 # Slice 06 gate: extractor quality on a 20-instance slice. Blocks scaling
 # ingest to the full corpus. Cached, so a rerun costs nothing.
 measure-extraction:
 	$(PY) scripts/measure_extraction.py
+
+# Slices 12-14. Every number in docs/eval/ regenerates from this one target:
+# three arms over the stratified slice, then the cost table and the write-up.
+# Resumable -- already-scored questions are skipped and every model call is
+# cached, so rerunning a finished run costs nothing and changes nothing.
+eval:
+	$(PY) scripts/run_eval.py --oracle --arms full_context,vector_rag,hydramem
+	$(PY) scripts/cost_table.py --oracle
 
 clean:
 	docker compose down -v

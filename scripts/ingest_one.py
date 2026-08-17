@@ -52,19 +52,13 @@ def main(argv: list) -> int:
         driver, instance.instance_id, instance.question,
         asked_at=instance.asked_at, bookmarks=bookmarks,
     )
-    print(f"\nanswer:   {result.answer}")
+    # Everything this script used to print by hand is what `explain` renders:
+    # the window, the round trips, which gates ran and fired, and the
+    # provenance of every cited fact. Printing it here means the demo path and
+    # the debugging path are the same code, so one cannot drift from the other.
+    print()
+    print(answer.explain(result))
     print(f"gold:     {instance.answer}")
-    # The two numbers slices 08 and 09 exist to produce: the window the question
-    # was read as scoping itself to, and the round trips it actually cost.
-    if result.window:
-        print(f"window:   {result.window}")
-    print(f"trips:    {result.round_trips} bolt round trips")
-    if result.abstained:
-        # gate_detail already leads with the reason code and names what was
-        # missing; the bare reason is only what is left when no gate fired.
-        print(f"abstained: {result.gate_detail or result.reason}")
-    else:
-        print(f"cited:    {result.cited_fact_ids} of {result.fact_count} facts")
     driver.close()
     return 0
 

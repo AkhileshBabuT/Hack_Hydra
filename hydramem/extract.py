@@ -29,6 +29,13 @@ PREDICATES = (
     "goal", "plan", "budget",
     # possessions
     "owns", "uses", "subscribes_to",
+    # how many of something. Slice 17 measured 68 of 633 `other` values (10.7%)
+    # as a bare count -- "4 engineers", "3,000 points", "three bikes". They are
+    # the values a knowledge-update question asks for, and while they sat in
+    # `other` they could not chain: `three bikes` and `four bikes` are distinct
+    # values under a non-functional predicate, so both stayed current and the
+    # instance the supersession machinery exists for produced 0 SUPERSEDES edges.
+    "quantity",
     # events, the temporal-reasoning workhorses
     "purchased", "visited", "attended", "scheduled", "started", "stopped",
     "completed", "experienced",
@@ -46,6 +53,23 @@ FUNCTIONAL_PREDICATES = frozenset([
     "name", "age", "occupation", "employer", "job_title", "lives_in",
     "hometown", "birthday", "email", "phone", "address", "budget",
 ])
+
+# Predicates whose slot is "the thing being counted", not the whole value.
+#
+# `quantity` is deliberately NOT functional. Functional would give one count per
+# entity, so "17 cameras" would retract "four bikes" -- exactly the mis-slotting
+# amplification pinned in test_chain.py. Instead the slot is the value with its
+# leading count stripped, so `three bikes` -> `four bikes` chains and `17
+# cameras` opens its own slot. See chain.group_key.
+COUNTED_PREDICATES = frozenset(["quantity"])
+
+# A leading cardinal, digits or the small words the corpus actually writes out.
+# Anchored, so "four bikes" loses the count and "bike for four people" does not.
+LEADING_COUNT = re.compile(
+    r"^\s*(?:\d[\d,.]*|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+    r"\s+(?:of\s+)?",
+    re.IGNORECASE,
+)
 
 ENTITY_TYPES = ("person", "org", "place", "thing", "preference", "event")
 
@@ -108,12 +132,28 @@ class Extraction(BaseModel):
 
 
 SYSTEM = (
-    "You extract durable facts about the user from one conversation session. "
+    # Slice 18 located why `single-session-assistant` scores 0.15 against 1.00,
+    # and it was this opening line rather than the extraction rules below it.
+    # Of the 20 questions: 10 die at gate 1 and **zero** are answered-wrong, so
+    # nothing is being mis-extracted -- it is not being extracted. Five of those
+    # instances hold no facts at all and eight hold facts with **zero** from an
+    # assistant turn, while all three that answer correctly hold four or five.
+    #
+    # "Facts about the user" plus "the user is the subject of most facts" is a
+    # strong enough prior that a session where the assistant explains a recipe
+    # or names a hostel reads as having no facts in it. The assistant rule below
+    # was already correct and was being outvoted by the framing above it.
+    # `Fact.role` comes from the turn the fact cites, so a fact the model never
+    # emits from an assistant turn can never be assistant-sourced downstream.
+    "You extract durable facts from one conversation session. Both speakers "
+    "state facts worth keeping, and a session where the assistant does most of "
+    "the explaining is full of them. "
     "Return JSON only, matching the schema exactly. No prose, no markdown.\n"
     "Rules:\n"
     "- Only facts stated in the session. Never infer, never generalise.\n"
-    "- The user is the subject of most facts; use the subject 'user' unless a "
-    "different person, org or place is explicitly named.\n"
+    "- Use the subject 'user' for what the user states about themselves, "
+    "'assistant' for what the assistant supplies, and a person, org or place "
+    "when one is explicitly named as the subject.\n"
     f"- predicate must be one of: {', '.join(PREDICATES)}\n"
     f"- subject_type must be one of: {', '.join(ENTITY_TYPES)}\n"
     "- value_is_entity is true only when the value names a person, org or place.\n"
@@ -121,8 +161,57 @@ SYSTEM = (
     "true ('last March', '2023-04-15'), or null if the session does not say.\n"
     "- turn_idx is the integer turn number the fact came from: 7 for turn [7].\n"
     "- evidence_span is a verbatim quote from that turn, at most 240 characters.\n"
-    "- Assistant suggestions the user did not adopt are not facts.\n"
+    # Slice 12 measured what the old rule ("assistant suggestions the user did
+    # not adopt are not facts") actually cost: on a session that is "user asks a
+    # generic question, assistant explains", there are no facts about the user
+    # at all, so the extractor returned an empty list and the graph stored
+    # nothing. The whole `single-session-assistant` category -- 20 of the 150
+    # evaluated questions -- scored **0**, because those questions ask the user
+    # to recall what the *assistant* said.
+    #
+    # The rule was right about the failure it was preventing (issue 19: assistant
+    # advice filed as a user `prefers` fact) and wrong about the remedy.
+    # Attribute it, do not discard it: the subject says who it belongs to and
+    # `Fact.role` already records which turn it came from, so `explain` can still
+    # show a human that a claim rests on something the assistant said.
+    "- The session has two speakers and both can state facts worth keeping. "
+    "Something the *user* stated about themselves takes subject 'user'. "
+    "Something the *assistant* stated -- an explanation, a recommendation, a "
+    "figure or duration it supplied -- takes subject 'assistant'.\n"
+    "- Never file assistant-stated content under subject 'user'. The user did "
+    "not say it, and a preference the assistant suggested is not the user's "
+    "preference unless the user agreed to it in their own turn.\n"
+    # Affirmative, not a filter. The old wording ("keep ... only where") read as
+    # a restriction on top of a framing that already discouraged assistant
+    # facts, and the two together produced sessions with nothing extracted at
+    # all. The exclusions are still here -- they are just no longer the point of
+    # the sentence.
+    "- Extract what the assistant supplied whenever the user could later ask "
+    "about it: a recommendation, an instruction, a named place or product, a "
+    "figure, a duration, a quantity, a step in a method. These are facts even "
+    "though they are not about the user. Set turn_idx to the assistant's turn "
+    "they came from. Skip only pleasantries and restatements of the user's own "
+    "question.\n"
+    "- A session in which the user asks and the assistant answers is not an "
+    "empty session. If the assistant named anything specific, that is a fact.\n"
     "- Prefer concrete events with their dates over vague summaries.\n"
+    # Slice 17, measured on the 633 `other` values in the slice-12 store: 121
+    # (19.1%) were a named specific the extractor had generalised away, and
+    # `single-session-assistant` scored 1 of 20 because of it. Asked for
+    # `mountain meditation` the graph held `likes | mindfulness techniques`;
+    # asked for a framerate it held `other | 2`. The theme is never the answer to
+    # the question -- the name is.
+    "- Copy names, titles, brands, places and numbers exactly as the session "
+    "writes them. Never replace a specific with the category it belongs to: "
+    "'Fender Mustang I V2' is the fact, 'a guitar' is not; 'Morning Glass "
+    "Coffee + Cafe' is the fact, 'a cafe' is not.\n"
+    # 68 of the 633 (10.7%) were bare counts sitting in `other`, where they
+    # cannot chain. See COUNTED_PREDICATES.
+    "- Use predicate 'quantity' when the fact is how many or how much of "
+    "something, and keep the count and the thing counted together in the "
+    "value: 'four bikes', '17 cameras', '3,000 points'.\n"
+    "- Use 'other' only when no listed predicate fits. It is a last resort, "
+    "not a default.\n"
     "- Never emit a fact whose value says nothing was mentioned or is unknown.\n"
     "- Return an empty facts list rather than inventing anything."
 )

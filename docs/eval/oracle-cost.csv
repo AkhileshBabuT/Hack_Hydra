@@ -1,0 +1,38 @@
+section,arm,metric,value,unit,note
+models,all arms,answering_model,nvidia/nemotron-3-ultra-550b-a55b,,"one answering model across every arm, so the comparison measures retrieval and not model quality"
+models,all arms,judge_model,nvidia/nemotron-3-super-120b-a12b,,"not the answering model, so no arm grades its own output"
+query,full_context,questions,150,count,
+query,full_context,prompt_tokens_per_question,5492,tokens,
+query,full_context,completion_tokens_per_question,47,tokens,
+query,full_context,tokens_per_question,5540,tokens,
+query,full_context,median_latency,26445,ms,n/a (no graph)
+query,full_context,p95_latency,65046,ms,n/a (no graph)
+query,full_context,bolt_round_trips_per_question,0.0,round trips,at most four by construction; one batched MSpaths resolves every pair
+query,full_context,questions_costing_0_round_trips,150,count,
+query,hydramem,questions,150,count,
+query,hydramem,prompt_tokens_per_question,2547,tokens,
+query,hydramem,completion_tokens_per_question,61,tokens,
+query,hydramem,tokens_per_question,2608,tokens,
+query,hydramem,median_latency,2672,ms,strong (evaluation)
+query,hydramem,p95_latency,19203,ms,strong (evaluation)
+query,hydramem,bolt_round_trips_per_question,3.0,round trips,at most four by construction; one batched MSpaths resolves every pair
+query,hydramem,questions_costing_3_round_trips,150,count,
+query,vector_rag,questions,150,count,
+query,vector_rag,prompt_tokens_per_question,2447,tokens,
+query,vector_rag,completion_tokens_per_question,47,tokens,
+query,vector_rag,tokens_per_question,2494,tokens,
+query,vector_rag,median_latency,23718,ms,n/a (no graph)
+query,vector_rag,p95_latency,97734,ms,n/a (no graph)
+query,vector_rag,bolt_round_trips_per_question,0.0,round trips,at most four by construction; one batched MSpaths resolves every pair
+query,vector_rag,questions_costing_0_round_trips,150,count,
+ingest,hydramem,instances_ingested,149,count,
+ingest,hydramem,sessions_ingested,255,count,
+ingest,hydramem,facts_written,6361,count,
+ingest,hydramem,facts_per_session,24.95,facts,
+ingest,hydramem,extraction_tokens_per_fact,270,tokens,"cache hits counted: the tokens were spent once, whoever spent them"
+ingest,hydramem,bolt_round_trips_per_fact,0.166,round trips,"batched UNWIND writes, so this falls as an instance grows"
+ingest,hydramem,latency_per_fact,25.6,ms,
+ingest,hydramem,parse_failures,0,count,
+server,hydradb,graph_client_operation_read_duration_seconds,276.605,ms,"mean over 615 samples; exported in seconds, verified from the metric definition and converted here"
+server,hydradb,graph_client_operation_write_duration_seconds,126.161,ms,"mean over 1057 samples; exported in seconds, verified from the metric definition and converted here"
+server,hydradb,graph_query_rows_duration_microseconds,205.877,ms,"mean over 615 samples; exported in microseconds, verified from the metric definition and converted here"

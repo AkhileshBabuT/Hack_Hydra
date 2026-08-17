@@ -37,6 +37,7 @@ UNWIND $rows AS row
 MERGE (n {id: row.vid})
 SET n:Entity,
     n.key = row.key,
+    n.skey = row.skey,
     n.name = row.name,
     n.type = row.type,
     n.first_seen = row.first_seen,
@@ -59,6 +60,7 @@ SET n:Fact,
     n.asserted_at = row.asserted_at,
     n.session_id = row.session_id,
     n.turn_idx = row.turn_idx,
+    n.role = row.role,
     n.snippet = row.snippet,
     n.confidence = row.confidence,
     n.status = row.status,
@@ -167,14 +169,29 @@ RETURN e.key AS key, e.name AS name, e.type AS type,
        e.first_seen AS first_seen, e.last_seen AS last_seen
 """
 
+# **Filter the node, then join.** Every instance-scoped read below splits into
+# two MATCH clauses on purpose. Written as one pattern with the filter in the
+# WHERE -- `MATCH (f:Fact)-[:SUBJECT]->(e:Entity) WHERE f.instance_id = $id` --
+# HydraDB builds the join across *every* tenant in the store and filters
+# afterwards, so latency scales with the size of the whole store rather than
+# with the tenant being read. Measured on a store holding 2,122 Fact nodes:
+# **7,635 ms to return 11 rows.** Filtering a single-node scan first, so the
+# automatic property index on `instance_id` drives, returns the same 11 rows in
+# **250 ms** -- 30x, and the gap widens as the store grows.
+#
+# There is no index DDL and `EXPLAIN` is unreachable over Bolt, so clause order
+# is the only lever there is. Do not "simplify" one of these back into a single
+# pattern.
+
 FACTS_FOR_INSTANCE = """
-MATCH (f:Fact)-[:SUBJECT]->(e:Entity)
+MATCH (f:Fact)
 WHERE f.instance_id = $instance_id
+MATCH (f)-[:SUBJECT]->(e:Entity)
 RETURN f.id AS id, f.fact_id AS fact_id, f.predicate AS predicate,
        f.value_text AS value_text, f.valid_from AS valid_from,
        f.valid_to AS valid_to, f.asserted_at AS asserted_at,
        f.status AS status, f.session_id AS session_id,
-       f.turn_idx AS turn_idx, f.snippet AS snippet,
+       f.turn_idx AS turn_idx, f.role AS role, f.snippet AS snippet,
        e.key AS subject_key, e.name AS subject_name
 ORDER BY asserted_at
 """
@@ -194,8 +211,9 @@ RETURN old.id AS id, old.fact_id AS fact_id, old.predicate AS predicate,
 # reassembled from these pairs, or derived from the fact list by
 # `temporal.history`, and slice 08's live test asserts the two agree.
 SUPERSESSION_CHAIN_FOR_INSTANCE = """
-MATCH (new:Fact)-[r:SUPERSEDES]->(old:Fact)
+MATCH (new:Fact)
 WHERE new.instance_id = $instance_id
+MATCH (new)-[r:SUPERSEDES]->(old:Fact)
 RETURN new.fact_id AS new_fact_id, new.value_text AS new_value,
        new.valid_from AS changed_at, new.predicate AS predicate,
        old.fact_id AS old_fact_id, old.value_text AS old_value,
@@ -205,8 +223,9 @@ ORDER BY changed_at
 """
 
 COUNT_EDGES_SUPERSEDES = """
-MATCH (a:Fact)-[r:SUPERSEDES]->(b:Fact)
+MATCH (a:Fact)
 WHERE a.instance_id = $instance_id
+MATCH (a)-[r:SUPERSEDES]->(b:Fact)
 RETURN count(*) AS total
 """
 
@@ -228,8 +247,9 @@ RETURN e.id AS id, e.key AS key, e.name AS name, e.type AS type
 # points a shorter surface form at a longer one, so a chain would mean "maya" ->
 # "maya chen" -> "maya chen jr" and that is not a shape it can produce.
 ALIASES_FOR_INSTANCE = """
-MATCH (a:Entity)-[r:ALIAS_OF]->(b:Entity)
+MATCH (a:Entity)
 WHERE a.instance_id = $instance_id
+MATCH (a)-[r:ALIAS_OF]->(b:Entity)
 RETURN a.key AS alias_key, b.key AS canonical_key
 """
 
@@ -255,10 +275,19 @@ RETURN a.key AS alias_key, b.key AS canonical_key
 #     `source < target`), so n anchors cost n(n-1)/2 pairs in one call.
 #
 # `path` comes back as a flat list: [node-map, 'EDGE_TYPE', node-map, ...].
+# `skey`, not `key`. The selector resolves anchors by an exact property match and
+# is the only part of this call that can be scoped at all -- there is nowhere to
+# put a WHERE, because HydraDB's native path parser ends with `parser.end()`. On
+# `key`, every tenant's `person:user` is a source, so the traversal cost grows
+# with the whole store and a real path can be crowded out of `resultLimit` by
+# other tenants' paths and read as `no_path`. Both happened: a 150-question arm
+# died on the 30s timeout, and two fixture tests started failing once the store
+# held ~160 tenants. `skey` is "<instance_id>|<key>", so the traversal starts and
+# stays inside one tenant.
 MS_PATHS = """
 CALL algo.MSpaths({{
-  sourceLabel: 'Entity', sourceProperty: 'key', sourceValues: [{anchors}],
-  targetLabel: 'Entity', targetProperty: 'key', targetValues: [{anchors}],
+  sourceLabel: 'Entity', sourceProperty: 'skey', sourceValues: [{anchors}],
+  targetLabel: 'Entity', targetProperty: 'skey', targetValues: [{anchors}],
   pairwise: true, fairRelationshipVariants: true,
   relTypes: ['SUBJECT', 'OBJECT'], relDirection: 'both',
   maxLen: $max_len, resultLimit: $result_limit
@@ -278,8 +307,9 @@ RETURN count(*) AS total
 """
 
 COUNT_EDGES_SUBJECT = """
-MATCH (f:Fact)-[r:SUBJECT]->(e:Entity)
+MATCH (f:Fact)
 WHERE f.instance_id = $instance_id
+MATCH (f)-[r:SUBJECT]->(e:Entity)
 RETURN count(*) AS total
 """
 

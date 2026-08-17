@@ -10,8 +10,8 @@ Split `longmemeval_oracle.json`, 20 instances, 38 sessions.
 | measure | value | gate | |
 |---|---|---|---|
 | schema validity | 100.0% (38/38) | >= 95% | PASS |
-| span grounding | 96.9% (250/258) | >= 90% | PASS |
-| `other` share | 24.4% | <= 35% | PASS |
+| span grounding | 96.3% (283/294) | >= 90% | PASS |
+| `other` share | 31.3% | <= 35% | PASS |
 
 **Grounding is a precision floor, not precision.** It asks whether the quoted
 evidence exists in the session, so it catches invention and cannot catch a
@@ -22,63 +22,66 @@ what the hand-check below is for.
 
 | | |
 |---|---|
-| facts emitted | 356 |
-| facts kept after `clean()` | 258 (72.5%) |
-| facts per parsed session | 6.8 |
+| facts emitted | 327 |
+| facts kept after `clean()` | 294 (89.9%) |
+| facts per parsed session | 7.7 |
 | out-of-range `turn_idx` | 0 (0.0%) |
 | empty evidence span | 0 (0.0%) |
-| span not found in session | 8 (3.1%) |
+| span not found in session | 11 (3.7%) |
 
 Spans the model quoted that are not in the transcript -- the only invention
 this measurement can catch on its own:
 
 | instance | predicate | value | quoted span |
 |---|---|---|---|
-| `gpt4_5438fa52` | `other` | refugees fleeing Nazi-occupied Europe, i | Refugees had to be fleeing Nazi-occupied Europe, be in a 'danger zone,' and have a close r |
-| `01493427` | `likes` | mix of wall-mounted shelves and glass-to | I like the idea of wall-mounted shelves. Do you think I could use a mix of wall-mounted sh |
-| `dfde3500` | `occupation` | language learner | I had a language exchange class at a local language school, where I'm paired with a Colomb |
-| `ec81a493` | `prefers` | displaying items with complementary fram | Choose a harmonious frame: Select a frame for your poster that complements the style and e |
-| `ec81a493` | `prefers` | creating cohesive shelf displays | Create a focal point: Place the clock in the center of the shelf, as it's the main attract |
-| `ec81a493` | `prefers` | balancing decorative items on shelf | Balance and symmetry: Balance the clock with other decorative items on either side. |
-| `ef66a6e5` | `prefers` | lane sharing and circle swimming policie | I'll also ask about the pool's policy on lane sharing and circle swimming. As someone who' |
-| `ef66a6e5` | `goal` | improve tennis game | I'm thinking of incorporating some strength training into my routine as well. Can you reco |
+| `gpt4_5438fa52` | `other` | refugee process during World War II, spe | Can you tell me more about the refugee process during World War II, specifically about the |
+| `28dc39ac` | `other` | The Witcher 3: Wild Hunt | I'm happy to recommend some open-world games with engaging storylines that might scratch t |
+| `28dc39ac` | `other` | Red Dead Redemption 2 | Can you tell me more about the storytelling and atmosphere in those games? ... like Red De |
+| `28dc39ac` | `other` | Horizon Zero Dawn | Can you tell me more about the storytelling and atmosphere in those games? ... like Red De |
+| `28dc39ac` | `other` | written articles from Polygon and Kotaku | I think I'll start with Polygon and Kotaku for written articles, and then check out some Y |
+| `852ce960` | `other` | $1,432 | assuming a 30-year fixed-rate mortgage at 4% interest |
+| `852ce960` | `other` | $1,987.21 | Mortgage payment: $1,432, Property taxes: $338.54, Insurance: $216.67 |
+| `dfde3500` | `likes` | street art | Watch out for street art: La Candelaria is known for its vibrant street art scene |
+| `b759caee` | `name` | @jessica_poole_jewellery | Jessica Poole (@jessica_poole_jewellery): Jessica is a UK-based jewelry designer who creat |
+| `6e984302` | `other` | cutting and shaping plastic bottles and  | I'm thinking of using plastic bottles and cardboard tubes as the base structure of my scul |
+| `ef66a6e5` | `likes` | lane sharing and circle swimming policie | I'll also ask about the pool's policy on lane sharing and circle swimming. |
 
 ## Predicate vocabulary
 
 | predicate | facts | share |
 |---|---|---|
-| `other` | 63 | 24.4% |
-| `likes` | 44 | 17.1% |
-| `prefers` | 30 | 11.6% |
-| `goal` | 25 | 9.7% |
-| `plan` | 16 | 6.2% |
-| `owns` | 15 | 5.8% |
-| `budget` | 8 | 3.1% |
-| `uses` | 8 | 3.1% |
-| `purchased` | 8 | 3.1% |
-| `name` | 8 | 3.1% |
-| `occupation` | 6 | 2.3% |
-| `age` | 5 | 1.9% |
+| `other` | 92 | 31.3% |
+| `likes` | 56 | 19.0% |
+| `goal` | 27 | 9.2% |
+| `prefers` | 19 | 6.5% |
+| `plan` | 19 | 6.5% |
+| `owns` | 12 | 4.1% |
+| `name` | 8 | 2.7% |
+| `age` | 7 | 2.4% |
+| `budget` | 7 | 2.4% |
+| `quantity` | 6 | 2.0% |
+| `purchased` | 5 | 1.7% |
+| `skill` | 5 | 1.7% |
 
 Off-vocabulary predicates the model asked for -- each becomes `other`:
 
 | requested | count |
 |---|---|
 | `plans` | 6 |
-| `planned_visit` | 5 |
-| `interest` | 5 |
-| `planned_event` | 2 |
+| `recommends` | 3 |
+| `planned_event` | 3 |
+| `preference` | 2 |
+| `describes` | 2 |
+| `preferences` | 2 |
+| `bike_type` | 2 |
+| `maintenance` | 2 |
 | `question` | 2 |
-| `nationality` | 1 |
-| `planned_countries` | 1 |
-| `purpose_of_visit` | 1 |
-| `ancestry` | 1 |
-| `family_history_interest` | 1 |
-| `born_in` | 1 |
-| `relocation_status` | 1 |
-| `interest_in_refugee_process` | 1 |
-| `authorized_admission` | 1 |
-| `eligibility_requirements` | 1 |
+| `planned_visit` | 2 |
+| `planned_post` | 2 |
+| `hobby` | 2 |
+| `sport` | 2 |
+| `car_model` | 1 |
+| `car_issue` | 1 |
 
 ## Subject keys
 
@@ -88,10 +91,11 @@ decides whether alias edges matter at all.
 
 | entity key | facts | share |
 |---|---|---|
-| `person:user` | 250 | 96.9% |
-| `event:emergency quota act of 1944` | 3 | 1.2% |
-| `event:bricha movement` | 3 | 1.2% |
-| `person:great-aunt` | 2 | 0.8% |
+| `person:user` | 285 | 96.9% |
+| `person:assistant` | 6 | 2.0% |
+| `person:jessica poole` | 1 | 0.3% |
+| `person:rachel boston` | 1 | 0.3% |
+| `person:lauren hunt` | 1 | 0.3% |
 
 ## Sessions rejected
 

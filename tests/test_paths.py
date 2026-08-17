@@ -229,17 +229,42 @@ def test_a_multi_hop_question_costs_four_round_trips(driver, two_entities):
     assert verdict.passed and facts
 
 
-def test_a_question_lost_at_gate_1_costs_two_round_trips(driver, two_entities):
-    """Short-circuiting is not decoration: the fact read is never issued and
-    the path call never happens.
+def test_a_question_lost_at_gate_1_costs_three_round_trips(driver, two_entities):
+    """Was two until slice 12, and the extra trip bought a measured fix.
+
+    Gate 1 used to reject any capitalised name with no `Entity` node, and ingest
+    only makes nodes for a fact's subject and for entity-valued objects -- so
+    `uses | Fitbit Charge 3` gave gate 1 nothing to resolve `fitbit charge`
+    against and it abstained on a question the graph answers. Measured on the
+    slice-12 slice: 7 of 13 HydraMem abstentions were that, which is a false
+    abstention rate the thesis cannot survive.
+
+    `gates.text_reader` now resolves a mention against stored values and
+    snippets, and that read is the third trip. It is only paid by a question
+    that was *about* to abstain here: the read is the same cached instance fetch
+    gates 2 and 3 and the answer already share, so a question that passes still
+    costs three in total and a multi-hop one still costs four. The path call
+    still never happens.
     """
     from hydramem import answer
 
     before = client.round_trips()
     verdict, facts = answer.check_gates(driver, two_entities,
                                         "Did Maya Chen call?", consistency="strong")
-    assert client.round_trips() - before == 2
+    assert client.round_trips() - before == 3
     assert verdict.reason == "unknown_entity" and facts == []
+
+
+def test_an_empty_instance_still_costs_two(driver):
+    """No entities at all means no mention can resolve and no fact read is worth
+    issuing, so the cheap path survives where it is actually cheap."""
+    from hydramem import answer
+
+    before = client.round_trips()
+    verdict, _ = answer.check_gates(driver, "no-such-instance-at-all",
+                                    "Did Maya Chen call?", consistency="strong")
+    assert client.round_trips() - before == 2
+    assert verdict.missing == "<empty graph>"
 
 
 def test_a_single_entity_question_costs_three_round_trips(driver, two_entities):
@@ -260,3 +285,42 @@ def test_the_assembled_path_statement_is_the_one_the_inventory_probes():
     probed, _ = statements.INVENTORY["ms_paths"]
     assert probed == statements.MS_PATHS.format(anchors="'__probe__'")
     assert paths.query(["__probe__"]) == probed
+
+
+# --- slice 17: the speaker hubs are not topical anchors ---------------------
+
+
+def test_the_assistant_is_dropped_from_the_anchor_set_and_the_user_is_not():
+    """`person:assistant` is a provenance subject; `person:user` is a topic."""
+    assert paths.topical(["person:user", "thing:hilton", "person:assistant"]) == [
+        "person:user", "thing:hilton"
+    ]
+    assert paths.topical(["thing:a", "thing:a", "thing:b"]) == ["thing:a", "thing:b"]
+
+
+def test_user_and_assistant_alone_are_not_a_pair_to_connect(driver, instance_id):
+    """Instance `7401057b`, the failure that killed a 150-question arm.
+
+    Gate 1 resolved `hilton` to `person:assistant` -- the hotel facts came from
+    assistant turns -- and the implicit `person:user` came along. Gate 4 then
+    asked whether the user and the assistant are connected. They never are:
+    slice 12's attribution puts assistant facts on their own star, sharing no
+    node with the user's. The old code abstained `no_path` on a question whose
+    answer was in the graph.
+
+    No call is made at all now, so this also costs nothing.
+    """
+    found = paths.find(driver, instance_id, ["person:assistant", "person:user"])
+    assert found.pairs_tried == 0
+    assert found.paths == []
+
+
+def test_a_timed_out_traversal_does_not_become_an_abstention():
+    """A traversal cut off at 30s has not established that no path exists.
+
+    Propagating it killed the slice-17 arm at question 54; abstaining on it
+    would be worse -- `no_path` asserting a structural absence nothing checked.
+    """
+    timed_out = paths.PathResult(pairs_tried=6, timed_out=True)
+    verdict = gates.path_gate(("thing:a", "thing:b"), lambda _keys: timed_out)
+    assert verdict.passed, "a timeout must pass the gate, not abstain"

@@ -128,3 +128,59 @@ def metrics(url: str = DEFAULT_METRICS) -> dict:
         except ValueError:
             continue
     return out
+
+
+# The unit is carried in the metric *name*, and that is authoritative rather
+# than conventional. Verified in `hydra-db/hydradb` @ 6a2fbb1,
+# `crates/telemetry/src/meter.rs`:
+#
+#   - The kernel measures in microseconds and *only* in microseconds.
+#     `HistogramUnit` converts at the export boundary and nowhere else, and the
+#     same enum value picks both the suffix and the scaling (`render_bound`,
+#     `scale_sum`). So a `_seconds` series cannot be microseconds by accident.
+#   - `HistogramUnit::Seconds` "exists for exactly one instrument":
+#     `db.client.operation.duration`, whose OTel semantic convention fixes it in
+#     seconds. Everything else keeps microseconds under a `hydradb.*` name.
+#   - `CounterUnit` has *no* seconds variant, deliberately -- scaling a counter
+#     would make it disagree with the `_microseconds` series rendered from the
+#     same field, "and nothing downstream could detect the factor of a million".
+#
+# Which is why this reads the suffix instead of assuming one: mixing the two up
+# is a 1,000,000x error that produces a plausible-looking table.
+_UNIT_TO_MS = {"seconds": 1_000.0, "microseconds": 0.001, "milliseconds": 1.0}
+
+
+def histograms(url: str = DEFAULT_METRICS) -> dict:
+    """`{name: {unit, sum, count, mean_ms}}`, summed over label sets.
+
+    `metrics()` above skips every labelled sample, which drops histograms
+    entirely -- deliberately, because guessing their units centrally is how you
+    get confidently wrong latency. This is the place they are actually used, so
+    this is where the unit is resolved.
+    """
+    with urllib.request.urlopen(url, timeout=10) as response:
+        body = response.read().decode("utf-8")
+
+    found = {}
+    for line in body.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        name, _, value = line.partition(" ")
+        base = name.split("{", 1)[0]
+        for suffix in ("_sum", "_count"):
+            if not base.endswith(suffix):
+                continue
+            metric = base[: -len(suffix)]
+            unit = metric.rsplit("_", 1)[-1]
+            if unit not in _UNIT_TO_MS:
+                continue
+            try:
+                found.setdefault(metric, {"unit": unit, "sum": 0.0, "count": 0.0})
+                found[metric][suffix[1:]] += float(value)
+            except ValueError:
+                pass
+
+    for metric, row in found.items():
+        scale = _UNIT_TO_MS[row["unit"]]
+        row["mean_ms"] = round(row["sum"] * scale / row["count"], 3) if row["count"] else 0.0
+    return found

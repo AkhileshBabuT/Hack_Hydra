@@ -200,3 +200,93 @@ def client_read(driver, statement_name, instance_id):
     statement, _ = statements.INVENTORY[statement_name]
     return client.read(driver, statement, {"instance_id": instance_id},
                        consistency="strong")[0]["total"]
+
+
+def test_the_same_fact_twice_with_different_evidence_is_one_row():
+    """Measured live in slice 12: HydraDB rejected a whole ingest batch with
+    `conflicting metadata values for vertex <id> property snippet`.
+
+    Fact identity is (session, turn, predicate, subject, value), so an extractor
+    that emits the same assertion twice with a different evidence span produces
+    two rows carrying one `vid` and two `snippet`s. HydraDB refuses the batch
+    outright -- correctly, since it cannot know which value wins -- and the whole
+    instance fails to ingest.
+    """
+    sess = session(0, "s0", 1_000, n_turns=4)
+    inst = instance([sess])
+    facts = [
+        fact(predicate="likes", value="jazz", turn_idx=2,
+                  evidence_span="I really like jazz"),
+        fact(predicate="likes", value="jazz", turn_idx=2,
+                  evidence_span="jazz is my favourite"),
+    ]
+    rows = ingest.build_rows(inst, [(sess, facts)])
+
+    assert len(rows.facts) == 1
+    assert len({r["vid"] for r in rows.facts}) == 1
+    # First wins, deterministically -- not "whichever the driver saw last".
+    assert rows.facts[0]["snippet"] == "I really like jazz"
+
+
+def test_a_deduplicated_fact_does_not_supersede_itself():
+    """The chain derives from the written set, so the duplicate must be gone
+    before `materialize` runs. Otherwise one assertion retracts itself and the
+    graph grows a SUPERSEDES edge from a fact to itself."""
+    sess = session(0, "s0", 1_000, n_turns=4)
+    inst = instance([sess])
+    facts = [
+        fact(predicate="employer", value="Acme", turn_idx=0, evidence_span="a"),
+        fact(predicate="employer", value="Acme", turn_idx=0, evidence_span="b"),
+    ]
+    rows = ingest.build_rows(inst, [(sess, facts)])
+    assert rows.supersedes == []
+    assert rows.close == []
+
+
+def test_a_fact_from_an_assistant_turn_is_attributed_to_the_assistant():
+    """Slice 12 measured that asking the model nicely does not work.
+
+    The extraction prompt was changed to set `subject: 'assistant'` for
+    assistant-stated content. Re-ingested live, 16 facts came back with
+    `role=assistant` and **zero** `person:assistant` entities existed -- the
+    model emitted the content and stamped 'user' on it anyway, which is issue
+    19's original failure unchanged. The turn role is already on hand and is not
+    an opinion, so it decides.
+    """
+    sess = session(0, "s0", 1_000, n_turns=4)          # turns alternate user/assistant
+    inst = instance([sess])
+    facts = [
+        fact(predicate="prefers", value="Choose a harmonious frame", turn_idx=3),
+        fact(predicate="employer", value="Acme", turn_idx=0),
+    ]
+    rows = ingest.build_rows(inst, [(sess, facts)])
+    by_value = {r["value_text"]: r for r in rows.facts}
+    subject_of = {r["fid"]: r["eid"] for r in rows.subject}
+    key_of = {e["vid"]: e["key"] for e in rows.entities}
+
+    assert key_of[subject_of[by_value["Choose a harmonious frame"]["vid"]]] == \
+        ingest.ASSISTANT_KEY
+    assert key_of[subject_of[by_value["Acme"]["vid"]]] == ingest.SELF_KEY
+
+
+def test_an_explicitly_named_subject_survives_an_assistant_turn():
+    """Only the *defaulted* subject is retagged. "You mentioned Maya moved" is
+    still a fact about Maya, not about the assistant."""
+    sess = session(0, "s0", 1_000, n_turns=4)
+    inst = instance([sess])
+    facts = [fact(subject="Maya Chen", predicate="lives_in", value="Berlin", turn_idx=3)]
+    rows = ingest.build_rows(inst, [(sess, facts)])
+    assert {e["key"] for e in rows.entities} == {"person:maya chen"}
+
+
+def test_the_user_and_the_assistant_do_not_share_a_supersession_chain():
+    """Same predicate, same session, two speakers: attributing by turn keeps them
+    apart, so an assistant's suggestion cannot retract the user's own fact."""
+    sess = session(0, "s0", 1_000, n_turns=4)
+    inst = instance([sess])
+    facts = [
+        fact(predicate="employer", value="Acme", turn_idx=0),      # user
+        fact(predicate="employer", value="Globex", turn_idx=1),    # assistant
+    ]
+    rows = ingest.build_rows(inst, [(sess, facts)])
+    assert rows.supersedes == [], "the assistant retracted the user's employer"

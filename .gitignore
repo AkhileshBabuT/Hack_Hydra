@@ -21,3 +21,7 @@ __pycache__/
 
 # Benchmark corpus (MIT, downloadable). scripts/fetch_corpus.py
 data/
+
+# Per-question eval rows (slice 12). Resume log, not a deliverable --
+# the committed artefact is the CSV in docs/eval/.
+.eval/

@@ -16,6 +16,7 @@ fact while genuinely different values coexist.
 """
 
 from collections import defaultdict
+from types import SimpleNamespace
 
 from . import extract, ids
 
@@ -26,10 +27,27 @@ def group_key(entity: int, fact: dict):
     A functional predicate owns one slot per entity, so any newer value replaces
     the older one. A non-functional predicate opens a slot per value, so two
     different likes coexist while the same like said twice collapses.
+
+    A counted predicate is the third case, and it exists because neither of the
+    other two describes a count. Functional would make one count per entity, so
+    "17 cameras" would retract "four bikes". Per-value gives every count its own
+    slot, so "four bikes" never retracts "three bikes" and a knowledge-update
+    instance forms no chain at all -- measured on `89941a93`: 22 facts, 0
+    SUPERSEDES edges, on the category supersession exists for. The slot that is
+    actually right is *what is being counted*, so the count is stripped and the
+    remainder is the slot.
     """
-    if fact["predicate"] in extract.FUNCTIONAL_PREDICATES:
-        return (entity, fact["predicate"])
-    return (entity, fact["predicate"], fact["value_text"].strip().lower())
+    predicate = fact["predicate"]
+    if predicate in extract.FUNCTIONAL_PREDICATES:
+        return (entity, predicate)
+    value = fact["value_text"].strip().lower()
+    if predicate in extract.COUNTED_PREDICATES:
+        counted = extract.LEADING_COUNT.sub("", value).strip()
+        # A value that is *only* a number ("6") has nothing left to key on;
+        # falling back to the whole value keeps it in its own slot rather than
+        # collapsing every bare number on the entity into one.
+        return (entity, predicate, counted or value)
+    return (entity, predicate, value)
 
 
 def derive(rows) -> list:
@@ -93,3 +111,39 @@ def current_facts(facts: list) -> list:
     be exercised over fixtures.
     """
     return [f for f in facts if f.get("status") == "current"]
+
+
+def rows_from_stored(facts: list, instance_id: str):
+    """Stored fact rows -> the shape `derive` consumes.
+
+    Slice 15 needed this because `ingest_instance` derives the chain only over
+    the rows it is *currently writing*. That is right for corpus ingest, where a
+    whole instance arrives at once, and wrong for an incremental `add`: two
+    separate calls each see one fact, so `employer = Acme` then
+    `employer = Globex` produced two current facts and **no** SUPERSEDES edge --
+    the one thing `Memory.history` exists to return.
+
+    Pure, and it reads only what `FACTS_FOR_INSTANCE` already returns, so
+    reconciling costs one read and no extra knowledge of the schema. The subject
+    entity id is recomputed rather than read: `ids.entity_id` is deterministic,
+    so it agrees with what ingest wrote by construction.
+
+    A namespace rather than `ingest.Rows`: `ingest` imports this module, so
+    naming it here would be a circular import, and `derive` reads only `.facts`
+    and `.subject`.
+    """
+    rows = SimpleNamespace(facts=[], subject=[])
+    for fact in facts:
+        rows.facts.append({
+            "vid": fact["id"],
+            "predicate": fact["predicate"],
+            "value_text": fact["value_text"] or "",
+            "valid_from": fact["valid_from"],
+            "asserted_at": fact["asserted_at"],
+            "turn_idx": fact["turn_idx"] or 0,
+        })
+        rows.subject.append({
+            "fid": fact["id"],
+            "eid": ids.entity_id(instance_id, fact["subject_key"]),
+        })
+    return rows

@@ -14,6 +14,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+# Slice 13's vector RAG baseline only. Kept out of the core install because it
+# pulls torch (~2 GB) and nothing else in the project needs it -- `hydramem.vectors`
+# imports it inside the function that loads the model, so the suite runs without it.
+eval = ["sentence-transformers>=3.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

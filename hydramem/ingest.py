@@ -28,6 +28,14 @@ BATCH = 500
 SELF_FORMS = frozenset(["user", "i", "me", "myself", "the user", "my"])
 SELF_KEY = "person:user"
 
+# The other speaker. Slice 12 made the extractor attribute assistant-stated
+# content instead of discarding it, so these surface forms have to collapse to
+# one entity the same way the user's do -- otherwise "you" and "the assistant"
+# become two entities and neither accumulates anything.
+ASSISTANT_FORMS = frozenset(["assistant", "you", "the assistant", "ai", "bot",
+                             "chatbot", "the ai"])
+ASSISTANT_KEY = "person:assistant"
+
 # Entity type for an entity-valued object, by predicate. Everything else is a
 # thing -- getting this wrong costs display quality, never retrievability.
 OBJECT_TYPES = {
@@ -59,10 +67,25 @@ def normalize(text: str) -> str:
     return _WS.sub(" ", _PUNCT.sub(" ", text)).strip()
 
 
+def scoped_key(instance_id: str, key: str) -> str:
+    """The instance-scoped Entity selector, `<instance_id>|<key>`.
+
+    Exists solely so gate 4's MSpaths call can be scoped to one tenant. The
+    selector is the only scopable part of that query -- the native path parser
+    ends with `parser.end()`, so no WHERE can follow -- and on the unscoped `key`
+    every tenant's `person:user` is a source. That is not a tidiness problem: it
+    cost a 150-question arm to the 30s timeout, and it silently crowded real
+    paths out of `resultLimit` once the store held enough tenants.
+    """
+    return f"{instance_id}|{key}"
+
+
 def entity_key(entity_type: str, name: str) -> str:
     normalized = normalize(name)
     if normalized in SELF_FORMS:
         return SELF_KEY
+    if normalized in ASSISTANT_FORMS:
+        return ASSISTANT_KEY
     return f"{entity_type}:{normalized}"
 
 
@@ -161,7 +184,8 @@ def build_rows(instance, extractions: list) -> Rows:
         seen = entities.get(key)
         if seen is None:
             entities[key] = {
-                "vid": vid, "key": key, "name": name, "type": entity_type,
+                "vid": vid, "key": key, "skey": scoped_key(inst, key),
+                "name": name, "type": entity_type,
                 "first_seen": session_idx, "last_seen": session_idx,
                 "instance_id": inst,
             }
@@ -183,15 +207,34 @@ def build_rows(instance, extractions: list) -> Rows:
         })
 
         for fact in facts:
-            subject_key = entity_key(fact.subject_type, fact.subject)
-            subject_vid = touch(subject_key, fact.subject, fact.subject_type, session.idx)
+            turn = session.turns[fact.turn_idx] if fact.turn_idx < len(session.turns) else None
+            subject_name, subject_key = fact.subject, entity_key(fact.subject_type, fact.subject)
+            if turn is not None and turn.role == "assistant" and subject_key == SELF_KEY:
+                # Attribution is derived from the turn, not requested from the
+                # model. Slice 12 asked the extractor to set subject 'assistant'
+                # for assistant-stated content and measured the result: 16 facts
+                # came back with role=assistant and **zero** `person:assistant`
+                # entities -- the model emitted the content and stamped 'user' on
+                # it anyway. That is issue 19's original failure exactly, and no
+                # amount of prompt wording makes it a guarantee.
+                #
+                # The turn role is already on hand and is not an opinion, so it
+                # decides. A fact extracted from an assistant turn and left with
+                # the *default* subject belongs to the assistant; a fact whose
+                # subject the model named explicitly is untouched, so "you
+                # mentioned Maya" still lands on Maya.
+                #
+                # Retrieval is unaffected either way -- `answer_question` sends
+                # the model every fact in the instance -- so this changes who the
+                # graph says said it, which is the thing that was wrong.
+                subject_name, subject_key = "assistant", ASSISTANT_KEY
+            subject_vid = touch(subject_key, subject_name, "person", session.idx)
 
             key = ids.idempotency_key(
                 inst, session.session_id, str(fact.turn_idx),
                 fact.predicate, subject_key, fact.value,
             )
             fvid = ids.fact_id(key)
-            turn = session.turns[fact.turn_idx] if fact.turn_idx < len(session.turns) else None
             snippet = (fact.evidence_span or (turn.content if turn else ""))[: extract.MAX_SPAN]
 
             rows.facts.append({
@@ -207,6 +250,13 @@ def build_rows(instance, extractions: list) -> Rows:
                 "asserted_at": session.timestamp,
                 "session_id": session.session_id,
                 "turn_idx": fact.turn_idx,
+                # Who actually said it. The extraction prompt forbids filing an
+                # assistant suggestion as a user fact and the model does it anyway
+                # (instance `ec81a493`, three `prefers` facts quoting the
+                # assistant). Grounding cannot catch that -- a copy of assistant
+                # text is grounded by definition -- so the role is carried to
+                # where a human can see it, in `answer.explain`.
+                "role": turn.role if turn else "",
                 "snippet": snippet,
                 "confidence": float(fact.confidence),
                 "status": "current",                # until chain.py supersedes it
@@ -229,6 +279,23 @@ def build_rows(instance, extractions: list) -> Rows:
                     "fid": fvid, "eid": object_vid,
                     "rid": ids.edge_id(fvid, "OBJECT", object_vid), "instance_id": inst,
                 })
+
+    # One row per fact identity. The extractor sometimes emits the same fact
+    # twice in a session with a different evidence span -- same session, turn,
+    # predicate, subject and value, so the same content-derived `vid`, but a
+    # different `snippet`. HydraDB rejects the whole batch for that, as
+    # `conflicting metadata values for vertex <id> property snippet`, and the
+    # instance fails to ingest at all. Measured live in slice 12.
+    #
+    # Keeping the first is the right resolution rather than a convenient one:
+    # identity here *is* (session, turn, predicate, subject, value), so two rows
+    # sharing a vid are the same assertion and the span is incidental to it.
+    # Deduplicated before `chain.materialize` below, so the chain derives from
+    # the same set that gets written.
+    seen = {}
+    for row in rows.facts:
+        seen.setdefault(row["vid"], row)
+    rows.facts = list(seen.values())
 
     rows.entities = list(entities.values())
     rows.next = [

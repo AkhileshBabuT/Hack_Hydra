@@ -27,7 +27,7 @@ legitimate keys.
 
 from dataclasses import dataclass, field
 
-from . import client, statements
+from . import client, ingest, statements
 
 # Entity -> Fact -> Entity is two hops, so four covers a question that has to
 # pass through an intermediate entity. `maxLen` above the server's
@@ -38,6 +38,36 @@ MAX_LEN = 4
 # structural paths. Large enough that a real answer is not truncated away,
 # small enough that a hyper-connected entity cannot flood the response.
 RESULT_LIMIT = 64
+
+# `person:assistant` is a bookkeeping subject, never a topical anchor.
+#
+# Slice 12 gave assistant-stated facts the subject `person:assistant` so that
+# provenance could say who a claim came from. That makes a **second** star beside
+# `person:user`, and the two share no node -- a fact hangs off one subject or the
+# other. So a question whose mention resolves to assistant-sourced content, plus
+# the implicit `person:user`, asked gate 4 whether the user and the assistant are
+# connected. They never are.
+#
+# Measured on `7401057b` ("how many free night's stays can I redeem"): gate 1
+# resolved `hilton` to `person:assistant`, because the hotel facts came from
+# assistant turns, and gate 4 abstained `no_path` on a question whose answer is
+# in the graph. A false abstention by construction, on exactly the category
+# (`single-session-assistant`) that already scores worst.
+#
+# It was also a cost bug: both keys are hubs and the selector is not
+# instance-scoped, so each matches one Entity per tenant. Pairwise over them
+# under `strong` consistency exceeded the 30s query timeout and killed a
+# 150-question arm at question 54.
+#
+# `person:user` stays. Questions genuinely are about the user, and dropping it
+# would make gate 4 skip every "is the user connected to X" question -- vacuous
+# rather than merely blunt. The distinction is what a question can be *about*.
+NON_TOPICAL_KEYS = frozenset({"person:assistant"})
+
+
+def topical(anchors) -> list:
+    """Anchors that a question can be about, order-stable and deduped."""
+    return [a for a in dict.fromkeys(anchors) if a not in NON_TOPICAL_KEYS]
 
 
 class UnsafeAnchor(ValueError):
@@ -79,6 +109,10 @@ class PathResult:
     paths: list = field(default_factory=list)
     pairs_tried: int = 0
     max_len: int = MAX_LEN
+    # The traversal was cut off by the server's query timeout, so an empty
+    # `paths` means "not established" rather than "no path". Gate 4 must not
+    # abstain on it.
+    timed_out: bool = False
 
     @property
     def detail(self) -> str:
@@ -120,15 +154,30 @@ def find(driver, instance_id: str, anchors, max_len: int = MAX_LEN,
 
     Fewer than two anchors is not a multi-hop question and costs no call at all.
     """
-    anchors = list(dict.fromkeys(anchors))          # order-stable dedupe
+    anchors = topical(anchors)                      # order-stable dedupe
     if len(anchors) < 2:
         return PathResult(pairs_tried=0, max_len=max_len)
 
-    rows = client.read(
-        driver, query(anchors),
-        {"max_len": max_len, "result_limit": result_limit},
-        bookmarks=bookmarks, consistency=consistency,
-    )
+    # The selector matches `skey`, so the anchors sent are instance-scoped. The
+    # keys the caller passes, the trace and `scoped()` all stay in plain `key`
+    # terms -- the scoping is a property of the query, not of the vocabulary.
+    try:
+        rows = client.read(
+            driver, query(ingest.scoped_key(instance_id, a) for a in anchors),
+            {"max_len": max_len, "result_limit": result_limit},
+            bookmarks=bookmarks, consistency=consistency,
+        )
+    except client.neo4j.exceptions.Neo4jError as exc:
+        # A traversal that ran out of time has not established that no path
+        # exists, and reporting `no_path` from it would be an abstention
+        # asserting something the database never checked. It killed an arm once
+        # by propagating; `timed_out` makes gate 4 pass instead, which is the
+        # direction BIAS fixes -- a false pass costs one model call and still
+        # has to survive the citation check.
+        if "timeout" not in str(exc).lower():
+            raise
+        return PathResult(pairs_tried=pair_count(len(anchors)), max_len=max_len,
+                          timed_out=True)
     return PathResult(
         paths=scoped([row["path"] for row in rows], instance_id),
         pairs_tried=pair_count(len(anchors)),

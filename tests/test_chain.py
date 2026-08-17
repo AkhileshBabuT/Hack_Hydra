@@ -232,3 +232,70 @@ def test_the_same_mis_slot_on_a_non_functional_predicate_is_harmless():
         (SESSIONS[1], [fact(predicate="likes", value="silver Honda Civic")]),
     ]))
     assert pairs == []
+
+
+# --- slice 17: counts chain on what is counted -----------------------------
+
+
+def test_a_knowledge_update_filed_as_other_forms_no_chain():
+    """Instance `89941a93`, the failure slice 17 exists to fix.
+
+    22 facts, 20 of them `other`, among them the two that ARE the knowledge
+    update the instance is built around. `other` is non-functional, so the slot
+    is the whole value; `three bikes` and `four bikes` are distinct values, so
+    both stay current and the instance forms **0** SUPERSEDES edges -- on the
+    one category supersession exists for.
+
+    Kept as a characterisation test: this is what `other` still does, and it is
+    why counts had to leave it rather than `other` being made to chain.
+    """
+    pairs = chain.derive(rows_for([
+        (SESSIONS[0], [fact(predicate="other", value="three bikes")]),
+        (SESSIONS[1], [fact(predicate="other", value="four bikes")]),
+    ]))
+    assert pairs == []
+
+
+def test_a_count_supersedes_the_earlier_count_of_the_same_thing():
+    """The same two facts under `quantity` chain, because the slot is `bikes`."""
+    pairs = chain.derive(rows_for([
+        (SESSIONS[0], [fact(predicate="quantity", value="three bikes")]),
+        (SESSIONS[1], [fact(predicate="quantity", value="four bikes")]),
+    ]))
+    assert [(a["value_text"], b["value_text"]) for a, b in pairs] == [
+        ("three bikes", "four bikes"),
+    ]
+
+
+def test_counts_of_different_things_do_not_retract_each_other():
+    """The reason `quantity` is not functional.
+
+    Functional would give one count slot per entity, so the camera count would
+    supersede the bike count -- the mis-slot amplification pinned above, but
+    built in by design rather than arrived at by extractor noise.
+    """
+    pairs = chain.derive(rows_for([
+        (SESSIONS[0], [fact(predicate="quantity", value="four bikes")]),
+        (SESSIONS[1], [fact(predicate="quantity", value="17 cameras")]),
+    ]))
+    assert pairs == []
+
+
+def test_a_bare_number_keeps_its_own_slot():
+    """`other | 2` was a real extracted value. Stripping the count leaves
+    nothing to key on, so a bare number must not collapse into one slot with
+    every other bare number on the entity."""
+    pairs = chain.derive(rows_for([
+        (SESSIONS[0], [fact(predicate="quantity", value="2")]),
+        (SESSIONS[1], [fact(predicate="quantity", value="6")]),
+    ]))
+    assert pairs == []
+
+
+def test_a_restated_count_still_collapses():
+    """Saying "four bikes" twice is one fact, not a revision of itself."""
+    pairs = chain.derive(rows_for([
+        (SESSIONS[0], [fact(predicate="quantity", value="four bikes")]),
+        (SESSIONS[1], [fact(predicate="quantity", value="Four Bikes")]),
+    ]))
+    assert len(pairs) == 1
